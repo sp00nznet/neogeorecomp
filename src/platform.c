@@ -19,6 +19,7 @@
  */
 
 #include <neogeorecomp/platform.h>
+#include <neogeorecomp/video.h>
 #include <neogeorecomp/io.h>
 
 #include <SDL.h>
@@ -216,6 +217,3 @@ uint64_t platform_get_ticks(void) {
 void platform_set_title(const char *title) {
     if (s_window) SDL_SetWindowTitle(s_window, title);
 }
-
-/* We need to bring in the screen dimensions constant */
-#include <neogeorecomp/video.h>

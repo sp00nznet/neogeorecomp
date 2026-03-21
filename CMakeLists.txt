@@ -8,8 +8,40 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 option(NEOGEORECOMP_BUILD_TESTS "Build test suite" OFF)
 option(NEOGEORECOMP_DEBUG "Enable debug tracing and breakpoints" OFF)
 
-# Find SDL2
-find_package(SDL2 REQUIRED)
+# Find SDL2 — try CMake config first, fall back to manual detection
+find_package(SDL2 QUIET)
+if(NOT SDL2_FOUND)
+    # Manual fallback: check common locations
+    find_path(SDL2_INCLUDE_DIR SDL.h
+        PATH_SUFFIXES SDL2 include/SDL2
+        PATHS
+            C:/msys64/mingw64
+            C:/msys64/ucrt64
+            $ENV{SDL2_DIR}
+    )
+    find_library(SDL2_LIBRARY
+        NAMES SDL2
+        PATH_SUFFIXES lib
+        PATHS
+            C:/msys64/mingw64
+            C:/msys64/ucrt64
+            $ENV{SDL2_DIR}
+    )
+    find_library(SDL2MAIN_LIBRARY
+        NAMES SDL2main
+        PATH_SUFFIXES lib
+        PATHS
+            C:/msys64/mingw64
+            C:/msys64/ucrt64
+            $ENV{SDL2_DIR}
+    )
+    if(SDL2_INCLUDE_DIR AND SDL2_LIBRARY)
+        set(SDL2_FOUND TRUE)
+        message(STATUS "SDL2 found manually: ${SDL2_LIBRARY}")
+    else()
+        message(FATAL_ERROR "SDL2 not found. Set SDL2_DIR or install SDL2 development libraries.")
+    endif()
+endif()
 
 # Collect sources
 set(NEOGEORECOMP_SOURCES
@@ -38,10 +70,16 @@ target_include_directories(neogeorecomp
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(neogeorecomp
-    PUBLIC
-        SDL2::SDL2
-)
+# Link SDL2 — handle both imported target and manual find
+if(TARGET SDL2::SDL2)
+    target_link_libraries(neogeorecomp PUBLIC SDL2::SDL2)
+else()
+    target_include_directories(neogeorecomp PUBLIC ${SDL2_INCLUDE_DIR})
+    target_link_libraries(neogeorecomp PUBLIC ${SDL2_LIBRARY})
+    if(SDL2MAIN_LIBRARY)
+        target_link_libraries(neogeorecomp PUBLIC ${SDL2MAIN_LIBRARY})
+    endif()
+endif()
 
 if(NEOGEORECOMP_DEBUG)
     target_compile_definitions(neogeorecomp PUBLIC NEOGEORECOMP_DEBUG=1)
