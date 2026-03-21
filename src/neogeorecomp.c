@@ -100,28 +100,66 @@ void neogeo_run(void) {
 
     printf("[neogeorecomp] Starting main loop\n");
 
-    /* Load initial SSP and PC from the P ROM vector table */
-    m68k_load_vectors(bus_get_prom_ptr());
+    /*
+     * Neo Geo boot sequence:
+     *   1. BIOS at $C00402 runs first (handles hardware init, eyecatcher)
+     *   2. BIOS calls game's USER routine ($00068C) once per frame
+     *   3. Game's VBlank handler ($00022C) fires on IRQ1
+     *
+     * Since we don't have the BIOS ROM, we set up the initial state
+     * that the BIOS would establish, then drive the game directly.
+     */
 
-    /* Call the reset vector entry point */
-    neogeo_func_t reset_func = func_table_lookup(g_m68k.pc);
-    if (reset_func) {
-        printf("[neogeorecomp] Executing reset vector at $%06X\n", g_m68k.pc);
-    } else {
-        fprintf(stderr, "[neogeorecomp] WARNING: No function registered at reset vector $%06X\n",
-                g_m68k.pc);
+    /* Set up initial CPU state (as BIOS would leave it) */
+    const uint8_t *prom = bus_get_prom_ptr();
+    if (prom) {
+        m68k_load_vectors(prom);
+        printf("[neogeorecomp] Vectors: SSP=$%08X PC=$%06X\n", g_m68k.ssp, g_m68k.pc);
     }
 
-    /* Main frame loop */
+    /* Set supervisor mode with interrupts enabled (as BIOS leaves it) */
+    m68k_set_sr(0x2000);
+
+    /* Initialize BIOS RAM locations that games expect */
+    bus_write8(0x10FD80, 0x00);  /* Game VBlank not active yet */
+    bus_write8(0x10FD82, 0x00);  /* System type: standard */
+    bus_write8(0x10FD83, 0x00);  /* Region: Japan */
+    bus_write8(0x10FDAE, 0x00);  /* Game state: 0 (init) */
+
+    /* Find the game's key entry points */
+    neogeo_func_t user_func = func_table_lookup(0x00068C);    /* USER routine */
+    neogeo_func_t vblank_func = func_table_lookup(0x00022C);  /* VBlank handler */
+
+    if (user_func) {
+        printf("[neogeorecomp] USER routine at $00068C: found\n");
+    } else {
+        fprintf(stderr, "[neogeorecomp] WARNING: No USER routine at $00068C\n");
+    }
+    if (vblank_func) {
+        printf("[neogeorecomp] VBlank handler at $00022C: found\n");
+    } else {
+        fprintf(stderr, "[neogeorecomp] WARNING: No VBlank handler at $00022C\n");
+    }
+
+    printf("[neogeorecomp] Entering main loop — %u functions available\n",
+           func_table_count());
+
+    /* Main frame loop — simulates what the BIOS does:
+     *   1. Call VBlank handler (simulates IRQ1)
+     *   2. Call USER routine (BIOS calls this once per frame)
+     *   3. Render, present, sync
+     */
     while (1) {
         neogeo_begin_frame();
 
-        /* Execute one frame of recompiled code.
-         * The recompiled code handles its own control flow via
-         * func_table_call(). The VBlank interrupt handler is called
-         * when timer_vblank_pending() returns true. */
-        if (reset_func) {
-            reset_func();
+        /* Simulate VBlank interrupt — the game's handler uploads VRAM/palette/sprites */
+        if (vblank_func) {
+            vblank_func();
+        }
+
+        /* Call the USER routine — this is the game's main per-frame logic */
+        if (user_func) {
+            user_func();
         }
 
         neogeo_trigger_vblank();

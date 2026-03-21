@@ -110,7 +110,27 @@ int bus_load_prom(const char *p1_path, const char *p2_path) {
     fclose(f);
     if (f2) fclose(f2);
 
-    printf("[bus] Loaded P ROM: %u bytes\n", s_prom_size);
+    /*
+     * Neo Geo P ROMs are stored byteswapped — every pair of bytes
+     * is swapped in the file. Undo this so the 68000 code is in
+     * the correct big-endian byte order.
+     */
+    for (uint32_t i = 0; i + 1 < s_prom_size; i += 2) {
+        uint8_t tmp = s_prom[i];
+        s_prom[i] = s_prom[i + 1];
+        s_prom[i + 1] = tmp;
+    }
+
+    /* Verify: first bytes should now be a valid SSP (typically $0010F300) */
+    if (s_prom_size >= 8) {
+        uint32_t ssp = ((uint32_t)s_prom[0] << 24) | ((uint32_t)s_prom[1] << 16) |
+                       ((uint32_t)s_prom[2] << 8)  | s_prom[3];
+        uint32_t pc  = ((uint32_t)s_prom[4] << 24) | ((uint32_t)s_prom[5] << 16) |
+                       ((uint32_t)s_prom[6] << 8)  | s_prom[7];
+        printf("[bus] Loaded P ROM: %u bytes (SSP=$%08X PC=$%06X)\n", s_prom_size, ssp, pc);
+    } else {
+        printf("[bus] Loaded P ROM: %u bytes\n", s_prom_size);
+    }
     return 0;
 }
 
