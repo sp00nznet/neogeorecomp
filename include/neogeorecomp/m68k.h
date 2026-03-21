@@ -368,6 +368,43 @@ void m68k_set_sr(uint16_t sr);
     (dst) = _res; \
 } while(0)
 
+/* --- NEGX: dst = 0 - dst - X, update XNZVC --- */
+#define M68K_NEGX8(dst) do { \
+    uint8_t _d = (uint8_t)(dst); \
+    uint8_t _x = g_m68k.flag_x ? 1 : 0; \
+    uint16_t _r = (uint16_t)0 - (uint16_t)_d - (uint16_t)_x; \
+    uint8_t _res = (uint8_t)_r; \
+    g_m68k.flag_c = g_m68k.flag_x = (_d != 0 || _x != 0); \
+    g_m68k.flag_v = ((_res & _d) & 0x80) != 0; \
+    if (_res != 0) g_m68k.flag_z = false; \
+    g_m68k.flag_n = (_res & 0x80) != 0; \
+    (dst) = ((dst) & 0xFFFFFF00u) | _res; \
+} while(0)
+
+#define M68K_NEGX16(dst) do { \
+    uint16_t _d = (uint16_t)(dst); \
+    uint16_t _x = g_m68k.flag_x ? 1 : 0; \
+    uint32_t _r = (uint32_t)0 - (uint32_t)_d - (uint32_t)_x; \
+    uint16_t _res = (uint16_t)_r; \
+    g_m68k.flag_c = g_m68k.flag_x = (_d != 0 || _x != 0); \
+    g_m68k.flag_v = ((_res & _d) & 0x8000) != 0; \
+    if (_res != 0) g_m68k.flag_z = false; \
+    g_m68k.flag_n = (_res & 0x8000) != 0; \
+    (dst) = ((dst) & 0xFFFF0000u) | _res; \
+} while(0)
+
+#define M68K_NEGX32(dst) do { \
+    uint32_t _d = (uint32_t)(dst); \
+    uint32_t _x = g_m68k.flag_x ? 1 : 0; \
+    uint64_t _r = (uint64_t)0 - (uint64_t)_d - (uint64_t)_x; \
+    uint32_t _res = (uint32_t)_r; \
+    g_m68k.flag_c = g_m68k.flag_x = (_d != 0 || _x != 0); \
+    g_m68k.flag_v = ((_res & _d) & 0x80000000u) != 0; \
+    if (_res != 0) g_m68k.flag_z = false; \
+    g_m68k.flag_n = (_res & 0x80000000u) != 0; \
+    (dst) = _res; \
+} while(0)
+
 /* --- NOT: dst = ~dst, update NZ, clear CV --- */
 #define M68K_NOT8(dst) do { \
     uint8_t _res = ~(uint8_t)(dst); \
@@ -541,6 +578,69 @@ void m68k_set_sr(uint16_t sr);
     (dst) = ((dst) & 0xFFFF0000u) | _d; \
 } while(0)
 
+/* LSR8: logical shift right (byte) */
+#define M68K_LSR8(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    uint8_t _d = (uint8_t)(dst); \
+    if (_cnt > 0) { \
+        if (_cnt <= 8) { \
+            g_m68k.flag_c = g_m68k.flag_x = ((_d >> (_cnt - 1)) & 1) != 0; \
+            _d >>= _cnt; \
+        } else { \
+            g_m68k.flag_c = g_m68k.flag_x = false; \
+            _d = 0; \
+        } \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = (_d == 0); \
+    g_m68k.flag_n = false; \
+    (dst) = ((dst) & 0xFFFFFF00u) | _d; \
+} while(0)
+
+/* LSR32: logical shift right (long) */
+#define M68K_LSR32(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    uint32_t _d = (uint32_t)(dst); \
+    if (_cnt > 0) { \
+        if (_cnt <= 32) { \
+            g_m68k.flag_c = g_m68k.flag_x = ((_d >> (_cnt - 1)) & 1) != 0; \
+            _d = (_cnt < 32) ? (_d >> _cnt) : 0; \
+        } else { \
+            g_m68k.flag_c = g_m68k.flag_x = false; \
+            _d = 0; \
+        } \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = (_d == 0); \
+    g_m68k.flag_n = false; \
+    (dst) = _d; \
+} while(0)
+
+/* ASR8: arithmetic shift right (byte, preserves sign) */
+#define M68K_ASR8(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    int8_t _d = (int8_t)(dst); \
+    if (_cnt > 0) { \
+        if (_cnt <= 8) { \
+            g_m68k.flag_c = g_m68k.flag_x = ((_d >> (_cnt - 1)) & 1) != 0; \
+            _d >>= _cnt; \
+        } else { \
+            g_m68k.flag_c = g_m68k.flag_x = (_d < 0); \
+            _d = (_d < 0) ? -1 : 0; \
+        } \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = ((uint8_t)_d == 0); \
+    g_m68k.flag_n = (_d < 0); \
+    (dst) = ((dst) & 0xFFFFFF00u) | (uint8_t)_d; \
+} while(0)
+
 /* ASR: arithmetic shift right (preserves sign) */
 #define M68K_ASR16(dst, count) do { \
     uint8_t _cnt = (uint8_t)(count) & 63; \
@@ -562,7 +662,44 @@ void m68k_set_sr(uint16_t sr);
     (dst) = ((dst) & 0xFFFF0000u) | (uint16_t)_d; \
 } while(0)
 
+/* ASR32: arithmetic shift right (long, preserves sign) */
+#define M68K_ASR32(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    int32_t _d = (int32_t)(dst); \
+    if (_cnt > 0) { \
+        if (_cnt <= 32) { \
+            g_m68k.flag_c = g_m68k.flag_x = ((_d >> (_cnt - 1)) & 1) != 0; \
+            _d = (_cnt < 32) ? (_d >> _cnt) : ((_d < 0) ? -1 : 0); \
+        } else { \
+            g_m68k.flag_c = g_m68k.flag_x = (_d < 0); \
+            _d = (_d < 0) ? -1 : 0; \
+        } \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = ((uint32_t)_d == 0); \
+    g_m68k.flag_n = (_d < 0); \
+    (dst) = (uint32_t)_d; \
+} while(0)
+
 /* ROL: rotate left */
+#define M68K_ROL8(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    uint8_t _d = (uint8_t)(dst); \
+    if (_cnt > 0) { \
+        _cnt %= 8; \
+        _d = (_d << _cnt) | (_d >> (8 - _cnt)); \
+        g_m68k.flag_c = (_d & 1) != 0; \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = (_d == 0); \
+    g_m68k.flag_n = (_d & 0x80) != 0; \
+    (dst) = ((dst) & 0xFFFFFF00u) | _d; \
+} while(0)
+
 #define M68K_ROL16(dst, count) do { \
     uint8_t _cnt = (uint8_t)(count) & 63; \
     uint16_t _d = (uint16_t)(dst); \
@@ -577,6 +714,71 @@ void m68k_set_sr(uint16_t sr);
     g_m68k.flag_z = (_d == 0); \
     g_m68k.flag_n = (_d & 0x8000) != 0; \
     (dst) = ((dst) & 0xFFFF0000u) | _d; \
+} while(0)
+
+#define M68K_ROL32(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    uint32_t _d = (uint32_t)(dst); \
+    if (_cnt > 0) { \
+        _cnt %= 32; \
+        _d = (_d << _cnt) | (_d >> (32 - _cnt)); \
+        g_m68k.flag_c = (_d & 1) != 0; \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = (_d == 0); \
+    g_m68k.flag_n = (_d & 0x80000000u) != 0; \
+    (dst) = _d; \
+} while(0)
+
+/* ROR: rotate right */
+#define M68K_ROR8(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    uint8_t _d = (uint8_t)(dst); \
+    if (_cnt > 0) { \
+        _cnt %= 8; \
+        _d = (_d >> _cnt) | (_d << (8 - _cnt)); \
+        g_m68k.flag_c = (_d & 0x80) != 0; \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = (_d == 0); \
+    g_m68k.flag_n = (_d & 0x80) != 0; \
+    (dst) = ((dst) & 0xFFFFFF00u) | _d; \
+} while(0)
+
+#define M68K_ROR16(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    uint16_t _d = (uint16_t)(dst); \
+    if (_cnt > 0) { \
+        _cnt %= 16; \
+        _d = (_d >> _cnt) | (_d << (16 - _cnt)); \
+        g_m68k.flag_c = (_d & 0x8000) != 0; \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = (_d == 0); \
+    g_m68k.flag_n = (_d & 0x8000) != 0; \
+    (dst) = ((dst) & 0xFFFF0000u) | _d; \
+} while(0)
+
+#define M68K_ROR32(dst, count) do { \
+    uint8_t _cnt = (uint8_t)(count) & 63; \
+    uint32_t _d = (uint32_t)(dst); \
+    if (_cnt > 0) { \
+        _cnt %= 32; \
+        _d = (_d >> _cnt) | (_d << (32 - _cnt)); \
+        g_m68k.flag_c = (_d & 0x80000000u) != 0; \
+    } else { \
+        g_m68k.flag_c = false; \
+    } \
+    g_m68k.flag_v = false; \
+    g_m68k.flag_z = (_d == 0); \
+    g_m68k.flag_n = (_d & 0x80000000u) != 0; \
+    (dst) = _d; \
 } while(0)
 
 /* --- SWAP: swap upper and lower words of data register --- */
@@ -653,6 +855,30 @@ void m68k_set_sr(uint16_t sr);
 } while(0)
 
 /* --- ADDX/SUBX: add/subtract with extend (for multi-precision) --- */
+#define M68K_ADDX8(dst, src) do { \
+    uint8_t _s = (uint8_t)(src); \
+    uint8_t _d = (uint8_t)(dst); \
+    uint16_t _r = (uint16_t)_d + (uint16_t)_s + (g_m68k.flag_x ? 1u : 0u); \
+    uint8_t _res = (uint8_t)_r; \
+    g_m68k.flag_c = g_m68k.flag_x = (_r > 0xFF); \
+    g_m68k.flag_v = ((_d ^ _res) & (_s ^ _res) & 0x80) != 0; \
+    if (_res != 0) g_m68k.flag_z = false; \
+    g_m68k.flag_n = (_res & 0x80) != 0; \
+    (dst) = ((dst) & 0xFFFFFF00u) | _res; \
+} while(0)
+
+#define M68K_ADDX16(dst, src) do { \
+    uint16_t _s = (uint16_t)(src); \
+    uint16_t _d = (uint16_t)(dst); \
+    uint32_t _r = (uint32_t)_d + (uint32_t)_s + (g_m68k.flag_x ? 1u : 0u); \
+    uint16_t _res = (uint16_t)_r; \
+    g_m68k.flag_c = g_m68k.flag_x = (_r > 0xFFFF); \
+    g_m68k.flag_v = ((_d ^ _res) & (_s ^ _res) & 0x8000) != 0; \
+    if (_res != 0) g_m68k.flag_z = false; \
+    g_m68k.flag_n = (_res & 0x8000) != 0; \
+    (dst) = ((dst) & 0xFFFF0000u) | _res; \
+} while(0)
+
 #define M68K_ADDX32(dst, src) do { \
     uint32_t _s = (uint32_t)(src); \
     uint32_t _d = (uint32_t)(dst); \
@@ -663,6 +889,30 @@ void m68k_set_sr(uint16_t sr);
     if (_res != 0) g_m68k.flag_z = false; /* Z is only cleared, never set */ \
     g_m68k.flag_n = (_res & 0x80000000u) != 0; \
     (dst) = _res; \
+} while(0)
+
+#define M68K_SUBX8(dst, src) do { \
+    uint8_t _s = (uint8_t)(src); \
+    uint8_t _d = (uint8_t)(dst); \
+    uint16_t _r = (uint16_t)_d - (uint16_t)_s - (g_m68k.flag_x ? 1u : 0u); \
+    uint8_t _res = (uint8_t)_r; \
+    g_m68k.flag_c = g_m68k.flag_x = (_r > 0xFF); \
+    g_m68k.flag_v = ((_d ^ _s) & (_d ^ _res) & 0x80) != 0; \
+    if (_res != 0) g_m68k.flag_z = false; \
+    g_m68k.flag_n = (_res & 0x80) != 0; \
+    (dst) = ((dst) & 0xFFFFFF00u) | _res; \
+} while(0)
+
+#define M68K_SUBX16(dst, src) do { \
+    uint16_t _s = (uint16_t)(src); \
+    uint16_t _d = (uint16_t)(dst); \
+    uint32_t _r = (uint32_t)_d - (uint32_t)_s - (g_m68k.flag_x ? 1u : 0u); \
+    uint16_t _res = (uint16_t)_r; \
+    g_m68k.flag_c = g_m68k.flag_x = (_r > 0xFFFF); \
+    g_m68k.flag_v = ((_d ^ _s) & (_d ^ _res) & 0x8000) != 0; \
+    if (_res != 0) g_m68k.flag_z = false; \
+    g_m68k.flag_n = (_res & 0x8000) != 0; \
+    (dst) = ((dst) & 0xFFFF0000u) | _res; \
 } while(0)
 
 #define M68K_SUBX32(dst, src) do { \
