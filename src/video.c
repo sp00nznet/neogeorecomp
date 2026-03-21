@@ -201,11 +201,31 @@ static void decode_sprite_tile(
 {
     if (!s_crom || s_crom_size == 0) return;
 
-    /* Each tile is 128 bytes in the interleaved C ROM */
+    /*
+     * Neo Geo C ROM tile format after our byte-interleaving:
+     *
+     * We interleaved C1 and C2 byte-by-byte in video_load_crom():
+     *   byte[0] = C1[0], byte[1] = C2[0], byte[2] = C1[1], byte[3] = C2[1], ...
+     *
+     * Original C1 (odd ROM) stores bitplanes 0 and 1 for each row.
+     * Original C2 (even ROM) stores bitplanes 2 and 3 for each row.
+     * Each ROM byte = 8 pixels of one bitplane.
+     *
+     * Per tile: 16 rows x 8 bytes per row = 128 bytes.
+     * Per row: C1_bp0, C2_bp2, C1_bp1, C2_bp3 for left 8 pixels,
+     *          then same for right 8 pixels.
+     *
+     * After interleaving (C1[i], C2[i] alternating):
+     *   For each 8-pixel half-row, 4 bytes:
+     *     byte 0 (from C1): bitplane 0 for 8 pixels
+     *     byte 1 (from C2): bitplane 2 for 8 pixels
+     *     byte 2 (from C1): bitplane 1 for 8 pixels
+     *     byte 3 (from C2): bitplane 3 for 8 pixels
+     */
+
     uint32_t tile_offset = (tile_num * 128) % s_crom_size;
     const uint8_t *tile_data = s_crom + tile_offset;
 
-    /* Palette base: palette_idx * 16 colors */
     int pal_base = palette_idx * 16;
 
     for (int row = 0; row < 16; row++) {
@@ -213,7 +233,6 @@ static void decode_sprite_tile(
         int py = screen_y + row;
         if (py < 0 || py >= NEOGEO_SCREEN_HEIGHT) continue;
 
-        /* Each row is 8 bytes: 2 byte-pairs for left half and right half */
         const uint8_t *row_data = tile_data + src_row * 8;
 
         for (int col = 0; col < 16; col++) {
@@ -221,56 +240,21 @@ static void decode_sprite_tile(
             int px = screen_x + col;
             if (px < 0 || px >= NEOGEO_SCREEN_WIDTH) continue;
 
-            /* Extract 4-bit pixel value from the interleaved data */
-            int half = src_col / 8;   /* 0 = left, 1 = right */
-            int bit = 7 - (src_col % 8);  /* MSB first */
+            int half = src_col / 8;
+            int bit = 7 - (src_col % 8);
+            int byte_idx = half * 4;
 
-            uint8_t c1_byte = row_data[half * 2];      /* bitplanes 0,1 */
-            uint8_t c2_byte = row_data[half * 2 + 1];  /* bitplanes 2,3 */
+            uint8_t bp0 = row_data[byte_idx + 0];  /* bitplane 0 */
+            uint8_t bp2 = row_data[byte_idx + 1];  /* bitplane 2 */
+            uint8_t bp1 = row_data[byte_idx + 2];  /* bitplane 1 */
+            uint8_t bp3 = row_data[byte_idx + 3];  /* bitplane 3 */
 
-            uint8_t pixel = 0;
-            pixel |= ((c1_byte >> bit) & 1) << 0;      /* bitplane 0 */
-            pixel |= ((c1_byte >> (bit)) & 0) << 1;    /* Need to extract bit from proper position */
+            uint8_t pixel = ((bp0 >> bit) & 1) << 0 |
+                            ((bp1 >> bit) & 1) << 1 |
+                            ((bp2 >> bit) & 1) << 2 |
+                            ((bp3 >> bit) & 1) << 3;
 
-            /* Re-extract properly: C1 has bp0 in one nibble, bp1 in another */
-            /* Actually, the Neo Geo stores each byte as 8 pixels of one bitplane.
-             * The interleaving is: C1_byte, C2_byte alternating.
-             * C1 low nibble = bp0, C1 high nibble = bp1
-             * C2 low nibble = bp2, C2 high nibble = bp3
-             * Wait — that's not right either. Let me use the standard decode. */
-
-            /* Standard Neo Geo C ROM decode:
-             * After byte-pair interleaving (C1, C2 alternating):
-             * For each pair of bytes at offset [half*2] and [half*2+1]:
-             *   Byte from C1: each bit position gives bitplane 0
-             *   Actually the bytes encode two bitplanes each.
-             *
-             * Correct decode: each C ROM byte contains one bitplane for 8 pixels.
-             * C1 bytes: alternating bitplane 0 and bitplane 1
-             * C2 bytes: alternating bitplane 2 and bitplane 3
-             * But after our interleaving, the layout is different.
-             *
-             * Let's use a simpler approach: read 4 bytes per 8-pixel half-row,
-             * extract bit at position 'bit' from each to get the 4 bitplanes.
-             */
-
-            /* Simplified: since we interleaved C1,C2 byte-by-byte, for each
-             * row of 16 pixels we have 8 bytes. The layout is:
-             *   [C1_0, C2_0, C1_1, C2_1, ...] but that's per-ROM-byte.
-             *
-             * For now, use a direct bitplane extraction: */
-            int byte_idx = half * 4;  /* 4 bytes per 8-pixel half */
-            uint8_t b0 = row_data[byte_idx + 0];
-            uint8_t b1 = row_data[byte_idx + 1];
-            uint8_t b2 = row_data[byte_idx + 2];
-            uint8_t b3 = row_data[byte_idx + 3];
-
-            pixel = ((b0 >> bit) & 1) << 0 |
-                    ((b1 >> bit) & 1) << 1 |
-                    ((b2 >> bit) & 1) << 2 |
-                    ((b3 >> bit) & 1) << 3;
-
-            if (pixel == 0) continue;  /* Transparent */
+            if (pixel == 0) continue;
 
             uint32_t color = argb_palette[pal_base + pixel];
             framebuffer[py * NEOGEO_SCREEN_WIDTH + px] = color;
@@ -343,64 +327,84 @@ void video_render_frame(uint32_t *framebuffer) {
         framebuffer[i] = backdrop;
     }
 
-    /* 2. Render sprites (back to front: high index first, low index on top) */
-    for (int spr = NEOGEO_MAX_SPRITES - 1; spr >= 0; spr--) {
-        /* Read SCB3: Y position, sprite height, sticky bit */
-        uint16_t scb3 = s_vram[0x8200 / 2 + spr];   /* VRAM $8200 + sprite index */
-        uint16_t scb4 = s_vram[0x8400 / 2 + spr];   /* VRAM $8400 + sprite index */
-        uint16_t scb2 = s_vram[0x8000 / 2 + spr];   /* VRAM $8000 + sprite index */
+    /* 2. Render sprites (back to front: high index first, low index on top)
+     *
+     * Sprite chaining: when the sticky bit is set in SCB3, the sprite
+     * inherits the X position of the previous sprite + 16 pixels.
+     * This allows building wide objects from multiple vertical strips.
+     * We track chain_x across iterations for this purpose.
+     */
+    int chain_x = 0;
+    int chain_y = 0;
 
-        /* SCB3 format:
-         *   Bits 15-7: Y position (calculated as 496 - Y for screen coords)
-         *   Bit 6: Sticky bit (chain to previous sprite's X position)
-         *   Bits 5-0: Sprite height in tiles (0 = 1 tile, up to 32)
+    for (int spr = NEOGEO_MAX_SPRITES - 1; spr >= 0; spr--) {
+        uint16_t scb3 = s_vram[0x8200 / 2 + spr];
+        uint16_t scb4 = s_vram[0x8400 / 2 + spr];
+        uint16_t scb2 = s_vram[0x8000 / 2 + spr];
+
+        /*
+         * SCB3 format:
+         *   Bits 15-7: Y position (raw value, screen Y = 496 - raw)
+         *   Bit 6:     Sticky bit (1 = chain X from previous sprite)
+         *   Bits 5-0:  Sprite height in tiles (0 = invisible)
          */
         int y_raw = (scb3 >> 7) & 0x1FF;
         int sticky = (scb3 >> 6) & 1;
         int height_tiles = scb3 & 0x3F;
-        if (height_tiles == 0) continue;  /* No tiles = invisible */
 
-        /* Y position: Neo Geo uses 496-Y for screen coordinate */
+        if (height_tiles == 0) {
+            /* No tiles — invisible, but update chain for next sprite */
+            chain_x = (scb4 >> 7) & 0x1FF;
+            chain_y = (496 - y_raw) & 0x1FF;
+            continue;
+        }
+
         int screen_y = (496 - y_raw) & 0x1FF;
-        if (screen_y > 256) screen_y -= 512;  /* Wrap for offscreen sprites */
+        if (screen_y >= 256) screen_y -= 512;
 
-        /* SCB4: X position (bits 15-7) */
-        int screen_x = (scb4 >> 7) & 0x1FF;
-        if (screen_x > 320) screen_x -= 512;  /* Wrap */
+        int screen_x;
+        if (sticky) {
+            /* Inherit X from previous sprite, advance by 16 */
+            screen_x = chain_x + 16;
+        } else {
+            screen_x = (scb4 >> 7) & 0x1FF;
+        }
+        if (screen_x >= 320) screen_x -= 512;
 
-        /* If sticky, inherit X from previous sprite + 16 */
-        /* (Handled by tracking chain_x across iterations — simplified here) */
+        /* Update chain position for next sprite */
+        chain_x = screen_x;
+        chain_y = screen_y;
 
-        /* SCB2: Shrink (not yet implemented — render at full size) */
-        /* Bits 7-0: V shrink ($FF = full size), Bits 11-8: H shrink ($F = full) */
-        (void)scb2;
+        /* SCB2: Shrink coefficients
+         * Bits 7-0:  V shrink ($FF = full, $00 = invisible)
+         * Bits 11-8: H shrink ($F = full, $0 = invisible)
+         * TODO: Implement shrinking. For now, render at full size.
+         */
+        uint8_t v_shrink = scb2 & 0xFF;
+        uint8_t h_shrink = (scb2 >> 8) & 0xF;
+        if (v_shrink == 0 || h_shrink == 0) continue;  /* Fully shrunk = invisible */
 
-        /* Read SCB1: Tile data for this sprite (up to height_tiles entries) */
-        /* SCB1 base: VRAM $0000, each sprite has 64 words (up to 32 tile pairs) */
+        /* Read SCB1: Tile data (each sprite has space for 32 tiles x 2 words) */
         uint16_t scb1_base = (uint16_t)(spr * 64);
 
         for (int tile_row = 0; tile_row < height_tiles && tile_row < 32; tile_row++) {
-            uint16_t scb1_even = s_vram[scb1_base + tile_row * 2];      /* Tile number low */
-            uint16_t scb1_odd  = s_vram[scb1_base + tile_row * 2 + 1];  /* Attributes */
+            uint16_t scb1_even = s_vram[scb1_base + tile_row * 2];
+            uint16_t scb1_odd  = s_vram[scb1_base + tile_row * 2 + 1];
 
-            /* Tile number: 20 bits (even word = low 16, odd bits 15-12 = high 4) */
-            uint32_t tile_num = (uint32_t)scb1_even | (((uint32_t)(scb1_odd >> 12) & 0xF) << 16);
+            /* Tile number: 20 bits */
+            uint32_t tile_num = (uint32_t)scb1_even |
+                               (((uint32_t)(scb1_odd >> 12) & 0xF) << 16);
 
-            /* Palette index: bits 7-0 of odd word */
             uint8_t palette_idx = scb1_odd & 0xFF;
-
-            /* Flip bits */
             bool h_flip = (scb1_odd & 0x0100) != 0;
             bool v_flip = (scb1_odd & 0x0200) != 0;
 
-            /* Auto-animation: bits 11-10 of odd word */
+            /* Auto-animation */
             uint8_t auto_anim = (scb1_odd >> 10) & 0x3;
             if (auto_anim == 1) {
-                /* 4-frame animation: toggle bits 1-0 of tile number */
-                tile_num = (tile_num & ~0x3) | (s_auto_anim_counter & 0x3);
+                tile_num = (tile_num & ~0x3u) | (s_auto_anim_counter & 0x3);
             } else if (auto_anim == 2) {
-                /* 8-frame animation: toggle bits 2-0 */
-                tile_num = (tile_num & ~0x7) | (s_auto_anim_counter & 0x7);
+                tile_num = (tile_num & ~0x7u) | (s_auto_anim_counter & 0x7);
             }
 
             if (tile_num == 0) continue;
