@@ -101,6 +101,21 @@ void neogeo_run(void);
  */
 void neogeo_shutdown(void);
 
+/*
+ * Yield to the runtime for one frame.
+ *
+ * Called by recompiled game code when it's waiting for VBlank
+ * (e.g., spinning on the $100424 frame-ready flag). This function:
+ *   1. Fires the VBlank handler (uploads VRAM/palette/sprites)
+ *   2. Renders the current frame
+ *   3. Presents to screen
+ *   4. Polls input
+ *   5. Syncs to ~59.19 Hz
+ *
+ * Returns false if the user requested quit (window close / ESC).
+ */
+bool neogeo_frame_yield(void);
+
 /* ----- Frame Hooks ----- */
 
 /*

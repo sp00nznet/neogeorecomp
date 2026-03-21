@@ -16,6 +16,7 @@
  */
 
 #include <neogeorecomp/bus.h>
+#include <neogeorecomp/neogeorecomp.h>
 #include <neogeorecomp/video.h>
 #include <neogeorecomp/palette.h>
 #include <neogeorecomp/io.h>
@@ -241,6 +242,22 @@ uint16_t bus_read16(uint32_t addr) {
         return 0xFFFF;
     }
     if (addr < 0x200000) {
+        /*
+         * VBlank simulation hook:
+         * When the game reads $100424 (frame-ready flag) and it's 0,
+         * the game is spin-waiting for VBlank to fire. We yield to
+         * the runtime to fire VBlank, render, present, and poll input.
+         * This is how we simulate the 68000's interrupt-driven VBlank
+         * without actual interrupts.
+         */
+        if (addr == 0x100424) {
+            uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
+            if (val == 0) {
+                neogeo_frame_yield();
+                /* Re-read after yield (VBlank handler may have set it to 1) */
+                return read16_be(s_wram + (addr & 0xFFFF));
+            }
+        }
         return read16_be(s_wram + (addr & 0xFFFF));
     }
     if (addr < 0x300000) {

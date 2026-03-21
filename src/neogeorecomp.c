@@ -21,6 +21,8 @@
 
 static neogeo_config_t s_config;
 static bool s_initialized = false;
+static bool s_frame_active = false;
+static neogeo_func_t s_vblank_func = NULL;
 
 /* 320x224 ARGB8888 framebuffer */
 static uint32_t s_framebuffer[NEOGEO_SCREEN_WIDTH * NEOGEO_SCREEN_HEIGHT];
@@ -144,31 +146,51 @@ void neogeo_run(void) {
     printf("[neogeorecomp] Entering main loop — %u functions available\n",
            func_table_count());
 
-    /* Main frame loop — simulates what the BIOS does:
-     *   1. Call VBlank handler (simulates IRQ1)
-     *   2. Call USER routine (BIOS calls this once per frame)
-     *   3. Render, present, sync
+    /*
+     * Execution model:
+     *
+     * On real Neo Geo hardware, the BIOS calls the game's USER routine
+     * once per frame. Some games (like Neo Drift Out) have their own
+     * internal frame loop inside the gameplay dispatcher that spins
+     * waiting for VBlank to set the "frame ready" flag at $100424.
+     *
+     * The game's VBlank handler ($00022C) fires as an interrupt — it
+     * runs asynchronously between frames, uploading VRAM/palette/sprite
+     * data and setting $100424 = 1 to signal the gameplay dispatcher.
+     *
+     * To simulate this without real interrupts, we hook into the
+     * platform_poll_input() call that the gameplay dispatcher makes
+     * on each iteration. Before returning, we fire the VBlank handler,
+     * render, and present. This way VBlank "fires" naturally during
+     * the game's own spin-wait loop.
+     *
+     * For the initial call (State 0 init), the game sets up and returns
+     * quickly (no spin loop), so we handle that as a simple call.
      */
-    while (1) {
+
+    /* Store VBlank handler globally so the frame hook can call it */
+    s_vblank_func = vblank_func;
+    s_frame_active = true;
+
+    /* Call USER — for State 0, this sets up init and returns to BIOS.
+     * For States 2/3, the gameplay dispatcher takes over with its own loop.
+     * The game's internal loop calls platform_poll_input() which triggers
+     * our VBlank simulation. */
+    if (user_func) {
+        user_func();
+    }
+
+    /* If USER returns (e.g., after BIOS return stub), loop and call again */
+    while (s_frame_active) {
+        /* Fire VBlank + render before calling USER again */
         neogeo_begin_frame();
-
-        /* Simulate VBlank interrupt — the game's handler uploads VRAM/palette/sprites */
-        if (vblank_func) {
-            vblank_func();
-        }
-
-        /* Call the USER routine — this is the game's main per-frame logic */
-        if (user_func) {
-            user_func();
-        }
-
+        if (vblank_func) vblank_func();
         neogeo_trigger_vblank();
         neogeo_end_frame();
 
-        /* Poll input — returns false if the user wants to quit */
-        if (!platform_poll_input()) {
-            break;
-        }
+        if (!platform_poll_input()) break;
+
+        if (user_func) user_func();
     }
 
     neogeo_shutdown();
@@ -191,6 +213,29 @@ void neogeo_shutdown(void) {
     bus_shutdown();
 
     s_initialized = false;
+}
+
+/* ----- Frame Yield (called by game's spin-wait loops) ----- */
+
+bool neogeo_frame_yield(void) {
+    neogeo_begin_frame();
+
+    /* Fire the VBlank handler — this uploads VRAM/palette/sprites
+     * and sets the frame-ready flag ($100424 = 1) */
+    if (s_vblank_func) {
+        s_vblank_func();
+    }
+
+    /* Render and present */
+    neogeo_trigger_vblank();
+    neogeo_end_frame();
+
+    /* Poll input */
+    if (!platform_poll_input()) {
+        s_frame_active = false;
+        return false;
+    }
+    return true;
 }
 
 /* ----- Frame Hooks ----- */
