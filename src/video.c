@@ -281,31 +281,39 @@ static void decode_fix_tile(
     uint32_t rom_size = s_use_bios_fix ? s_sfix_size : s_srom_size;
     if (!rom || rom_size == 0) return;
 
-    /* Each S ROM tile is 32 bytes */
+    /*
+     * Neo Geo S ROM fix layer tile format: 8x8, 4bpp, nibble-packed.
+     * 32 bytes per tile. 4 bytes per row, 8 rows.
+     * Each byte contains 2 pixels: high nibble = left, low nibble = right.
+     *
+     * Row layout: byte[row*4 + 0] = pixels 0,1
+     *             byte[row*4 + 1] = pixels 2,3
+     *             byte[row*4 + 2] = pixels 4,5
+     *             byte[row*4 + 3] = pixels 6,7
+     */
     uint32_t offset = ((uint32_t)tile_num * 32) % rom_size;
     const uint8_t *tile = rom + offset;
 
     int pal_base = palette_idx * 16;
 
-    /* S ROM format: 8 columns of 8 pixels each, stored as 4 bytes per column */
-    for (int col = 0; col < 8; col++) {
-        const uint8_t *col_data = tile + col * 4;
-        for (int row = 0; row < 8; row++) {
+    for (int row = 0; row < 8; row++) {
+        int py = screen_y + row;
+        if (py < 0 || py >= NEOGEO_SCREEN_HEIGHT) continue;
+
+        const uint8_t *row_data = tile + row * 4;
+
+        for (int col = 0; col < 8; col++) {
             int px = screen_x + col;
-            int py = screen_y + row;
             if (px < 0 || px >= NEOGEO_SCREEN_WIDTH) continue;
-            if (py < 0 || py >= NEOGEO_SCREEN_HEIGHT) continue;
 
-            int bit = 7 - row;
-            uint8_t pixel = ((col_data[0] >> bit) & 1) << 0 |
-                            ((col_data[1] >> bit) & 1) << 1 |
-                            ((col_data[2] >> bit) & 1) << 2 |
-                            ((col_data[3] >> bit) & 1) << 3;
+            /* Each byte has 2 pixels: high nibble = even col, low nibble = odd col */
+            uint8_t byte_val = row_data[col / 2];
+            uint8_t pixel = (col & 1) ? (byte_val & 0x0F) : (byte_val >> 4);
 
-            if (pixel == 0) continue;  /* Transparent */
+            if (pixel == 0) continue;
 
             uint32_t color = argb_palette[pal_base + pixel];
-            if ((color & 0xFF000000) == 0) continue;  /* Transparent ARGB */
+            if ((color & 0xFF000000) == 0) continue;
             framebuffer[py * NEOGEO_SCREEN_WIDTH + px] = color;
         }
     }
