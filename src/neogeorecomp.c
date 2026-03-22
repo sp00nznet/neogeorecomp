@@ -306,13 +306,28 @@ bool neogeo_frame_yield(void) {
         uint16_t wr_scb3_0 = bus_read16(buf_wr + 0x42);
         uint16_t wr_scb3_1 = bus_read16(buf_wr + 0x44);
 
-        /* Check VRAM $8220 (SCB3 for sprite 32+) */
-        uint16_t vram_8220 = vr[0x8220];
-        uint16_t vram_8221 = vr[0x8221];
-
-        printf("[vram %d] SCB3@8200=$%04X SCB3@8220=$%04X,$%04X rd=$%04X wr=$%04X\n",
-               s_frame_count, vr[0x8200], vram_8220, vram_8221,
-               buf_scb3_0, wr_scb3_0);
+        /* Dump first few active sprites' positions and tiles */
+        if (s_frame_count == 200 || s_frame_count == 400) {
+            int dumped = 0;
+            for (int spr = 0; spr < 381 && dumped < 5; spr++) {
+                uint16_t scb3 = vr[0x8200 + spr];
+                if ((scb3 & 0x3F) == 0) continue;
+                uint16_t scb4 = vr[0x8400 + spr];
+                uint16_t scb2 = vr[0x8000 + spr];
+                uint16_t tile_lo = vr[spr * 64];
+                uint16_t tile_hi = vr[spr * 64 + 1];
+                int y_raw = (scb3 >> 7) & 0x1FF;
+                int height = scb3 & 0x3F;
+                int x = (scb4 >> 7) & 0x1FF;
+                int screen_y = (496 - y_raw) & 0x1FF;
+                if (screen_y >= 256) screen_y -= 512;
+                uint32_t tile_num = (uint32_t)tile_lo | (((uint32_t)(tile_hi >> 12) & 0xF) << 16);
+                uint8_t pal = tile_hi & 0xFF;
+                printf("  [spr %d] tile=$%05X pal=%d pos=(%d,%d) h=%d shrink=$%04X\n",
+                       spr, tile_num, pal, x > 320 ? x-512 : x, screen_y, height, scb2);
+                dumped++;
+            }
+        }
         if (0) printf("[vram %d] SCB1=%d SCB3=%d rd=$%04X,$%04X wr=$%04X,$%04X\n",
                s_frame_count, scb1_nonzero, scb3_nonzero,
                buf_scb3_0, buf_scb3_1, wr_scb3_0, wr_scb3_1);
@@ -449,7 +464,34 @@ void neogeo_begin_frame(void) {
 }
 
 void neogeo_trigger_vblank(void) {
-    /* (Time-based yield handled in func_table_call) */
+    /* Dump active sprite details once */
+    {
+        static int s_dump = 0;
+        if (!s_dump) {
+            const uint16_t *vr = video_get_vram_ptr();
+            int active = 0;
+            for (int i = 0; i < 381; i++)
+                if ((vr[0x8200 + i] & 0x3F) != 0) active++;
+            if (active > 0) {
+                s_dump = 1;
+                printf("[SPRITES] %d active:\n", active);
+                for (int spr = 0; spr < 381; spr++) {
+                    uint16_t scb3 = vr[0x8200 + spr];
+                    if ((scb3 & 0x3F) == 0) continue;
+                    uint16_t scb4 = vr[0x8400 + spr];
+                    uint16_t scb2 = vr[0x8000 + spr];
+                    uint16_t t0 = vr[spr*64], t1 = vr[spr*64+1];
+                    int yr = (scb3>>7)&0x1FF, h = scb3&0x3F;
+                    int sy = (496-yr)&0x1FF; if(sy>=256) sy-=512;
+                    int x = (scb4>>7)&0x1FF; if(x>320) x-=512;
+                    uint32_t tn = (uint32_t)t0 | (((uint32_t)(t1>>12)&0xF)<<16);
+                    printf("  #%d: tile=$%05X pal=%d pos=(%d,%d) h=%d sh=$%04X\n",
+                           spr, tn, t1&0xFF, x, sy, h, scb2);
+                }
+                fflush(stdout);
+            }
+        }
+    }
 
     /* Render the current VRAM state to the framebuffer */
     video_render_frame(s_framebuffer);
