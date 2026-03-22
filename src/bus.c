@@ -253,8 +253,14 @@ uint16_t bus_read16(uint32_t addr) {
         if (addr == 0x100424) {
             uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
             if (val == 0) {
-                neogeo_frame_yield();
-                /* Re-read after yield (VBlank handler may have set it to 1) */
+                /* Prevent recursion: VBlank handler also reads $100424.
+                 * Only yield if we're not already inside a yield. */
+                static bool s_in_yield = false;
+                if (!s_in_yield) {
+                    s_in_yield = true;
+                    neogeo_frame_yield();
+                    s_in_yield = false;
+                }
                 return read16_be(s_wram + (addr & 0xFFFF));
             }
         }

@@ -173,16 +173,25 @@ void neogeo_run(void) {
     s_frame_active = true;
 
     /* Call USER — for State 0, this sets up init and returns to BIOS.
-     * For States 2/3, the gameplay dispatcher takes over with its own loop.
-     * The game's internal loop calls platform_poll_input() which triggers
-     * our VBlank simulation. */
+     * For States 2/3, the gameplay dispatcher takes over with its own loop. */
+    printf("[neogeorecomp] Calling USER routine (state %d)...\n", bus_read8(0x10FDAE));
+    fflush(stdout);
     if (user_func) {
         user_func();
     }
+    printf("[neogeorecomp] USER returned. State now: %d\n", bus_read8(0x10FDAE));
+    fflush(stdout);
 
-    /* If USER returns (e.g., after BIOS return stub), loop and call again */
+    /* If USER returns (e.g., after BIOS return stub advances state),
+     * loop: fire VBlank, render, then call USER again with the new state.
+     * This handles the State 0 -> State 2 transition where State 0
+     * returns to BIOS (our stub) which sets state=2, then we need to
+     * call USER again to run State 2's handler. */
     while (s_frame_active) {
-        /* Fire VBlank + render before calling USER again */
+        printf("[neogeorecomp] Outer loop: state=%d, firing VBlank + USER\n", bus_read8(0x10FDAE));
+        fflush(stdout);
+
+        /* Fire VBlank + render */
         neogeo_begin_frame();
         if (vblank_func) vblank_func();
         neogeo_trigger_vblank();
@@ -190,6 +199,7 @@ void neogeo_run(void) {
 
         if (!platform_poll_input()) break;
 
+        /* Call USER for the current state */
         if (user_func) user_func();
     }
 
@@ -217,6 +227,8 @@ void neogeo_shutdown(void) {
 
 /* ----- Frame Yield (called by game's spin-wait loops) ----- */
 
+static int s_frame_count = 0;
+
 bool neogeo_frame_yield(void) {
     neogeo_begin_frame();
 
@@ -229,6 +241,31 @@ bool neogeo_frame_yield(void) {
     /* Render and present */
     neogeo_trigger_vblank();
     neogeo_end_frame();
+
+    /* Diagnostic: log state every 60 frames (~1 second) */
+    s_frame_count++;
+    if (s_frame_count % 60 == 1) {
+        uint8_t game_state = bus_read8(0x10FDAE);
+        uint16_t sub_state = bus_read16(0x100426);
+        uint8_t vbl_flag = bus_read8(0x10FD80);
+        uint16_t frame_ready = bus_read16(0x100424);
+
+        /* Check if any sprites have data */
+        const uint16_t *vram = video_get_vram_ptr();
+        int active_sprites = 0;
+        for (int i = 0; i < 381; i++) {
+            uint16_t scb3 = vram[0x8200 / 2 + i];
+            if ((scb3 & 0x3F) != 0) active_sprites++;
+        }
+
+        /* Check palette - sample a few entries */
+        uint16_t pal0_c1 = palette_read(1);
+        uint16_t backdrop = palette_read(255 * 16 + 15);
+
+        printf("[frame %d] state=%d sub=%d vbl=$%02X ready=%d sprites=%d pal0c1=$%04X backdrop=$%04X\n",
+               s_frame_count, game_state, sub_state, vbl_flag, frame_ready,
+               active_sprites, pal0_c1, backdrop);
+    }
 
     /* Poll input */
     if (!platform_poll_input()) {
