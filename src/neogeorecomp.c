@@ -262,6 +262,36 @@ bool neogeo_frame_yield(void) {
         uint16_t pal0_c1 = palette_read(1);
         uint16_t backdrop = palette_read(255 * 16 + 15);
 
+        /* Also check VRAM for any non-zero data */
+        int vram_nonzero = 0;
+        for (int i = 0; i < 0x4400; i++) {
+            if (vram[i] != 0) { vram_nonzero++; break; }
+        }
+
+        /* Check fix layer */
+        int fix_nonzero = 0;
+        for (int i = 0x7000/2; i < 0x7500/2; i++) {
+            if (vram[i] != 0) { fix_nonzero++; }
+        }
+
+        /* Check palette RAM for any non-zero colors */
+        int pal_nonzero = 0;
+        for (int i = 0; i < 256*16; i++) {
+            if (palette_read(i) != 0) { pal_nonzero++; break; }
+        }
+
+        uint32_t vram_read_ptr = bus_read32(0x1025D2);
+        uint32_t vram_write_ptr = bus_read32(0x1025D6);
+        uint16_t vram_swap = bus_read16(0x102532);
+        uint16_t spr_flag = bus_read16(0x102224);
+
+        printf("[frame %d] st=%d sub=%d spr=%d pal=%s vram=%s fix=%d swap=%d rdp=$%06X wrp=$%06X sprfl=%d\n",
+               s_frame_count, game_state, sub_state,
+               active_sprites,
+               pal_nonzero ? "Y" : "N",
+               vram_nonzero ? "Y" : "N", fix_nonzero, vram_swap,
+               vram_read_ptr, vram_write_ptr, spr_flag);
+        if (0) /* suppress original */
         printf("[frame %d] state=%d sub=%d vbl=$%02X ready=%d sprites=%d pal0c1=$%04X backdrop=$%04X\n",
                s_frame_count, game_state, sub_state, vbl_flag, frame_ready,
                active_sprites, pal0_c1, backdrop);
