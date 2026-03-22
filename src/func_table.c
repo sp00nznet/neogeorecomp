@@ -95,7 +95,14 @@ void func_table_call(uint32_t addr) {
         }
     }
 
-    /* Early boot logging: print first 50 calls to trace execution */
+    /* Trace sprite-related functions */
+    if (addr == 0x012202 || addr == 0x01348E || addr == 0x007F32 ||
+        addr == 0x00805C || addr == 0x008172 || addr == 0x007E1C) {
+        fprintf(stderr, "[TRACE] $%06X (call #%u)\n", addr, s_call_count);
+        fflush(stderr);
+    }
+
+    /* Early boot logging */
     if (s_call_count <= 5000 && (s_call_count <= 10 || s_call_count % 500 == 0)) {
         fprintf(stderr, "[call #%u] $%06X %s\n", s_call_count, addr, func ? "OK" : "MISS");
         fflush(stderr);

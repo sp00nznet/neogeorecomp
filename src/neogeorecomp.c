@@ -297,10 +297,25 @@ bool neogeo_frame_yield(void) {
         for (int i = 0; i < 128; i++) {
             if (bus_read16(rd_buf + i * 2) != 0) buf_nonzero++;
         }
-        printf("[vram %d] SCB1=%d(@%d=$%04X) SCB3=%d swap=%d sprfl=%d\n",
-               s_frame_count, scb1_nonzero,
-               first_scb1_addr, first_scb1_val,
-               scb3_nonzero, swap_flag, spr_flag);
+        /* Check double-buffer content */
+        uint32_t buf_rd = bus_read32(0x1025D2);
+        uint16_t buf_scb3_0 = bus_read16(buf_rd + 0x42);  /* SCB3 data in buffer */
+        uint16_t buf_scb3_1 = bus_read16(buf_rd + 0x44);
+
+        uint32_t buf_wr = bus_read32(0x1025D6);
+        uint16_t wr_scb3_0 = bus_read16(buf_wr + 0x42);
+        uint16_t wr_scb3_1 = bus_read16(buf_wr + 0x44);
+
+        /* Check VRAM $8220 (SCB3 for sprite 32+) */
+        uint16_t vram_8220 = vr[0x8220];
+        uint16_t vram_8221 = vr[0x8221];
+
+        printf("[vram %d] SCB3@8200=$%04X SCB3@8220=$%04X,$%04X rd=$%04X wr=$%04X\n",
+               s_frame_count, vr[0x8200], vram_8220, vram_8221,
+               buf_scb3_0, wr_scb3_0);
+        if (0) printf("[vram %d] SCB1=%d SCB3=%d rd=$%04X,$%04X wr=$%04X,$%04X\n",
+               s_frame_count, scb1_nonzero, scb3_nonzero,
+               buf_scb3_0, buf_scb3_1, wr_scb3_0, wr_scb3_1);
     }
 
     /* Save a screenshot at frame 300 (~5 seconds in) */
@@ -338,7 +353,7 @@ bool neogeo_frame_yield(void) {
         const uint16_t *vram = video_get_vram_ptr();
         int active_sprites = 0;
         for (int i = 0; i < 381; i++) {
-            uint16_t scb3 = vram[0x8200 / 2 + i];
+            uint16_t scb3 = vram[0x8200 + i];
             if ((scb3 & 0x3F) != 0) active_sprites++;
         }
 

@@ -430,7 +430,12 @@ void bus_write16(uint32_t addr, uint16_t val) {
 
     if (addr < 0x100000) return;  /* P ROM is read-only */
     if (addr < 0x200000) {
-        s_reads_without_write = 0;  /* Reset spin detector on any write */
+        s_reads_without_write = 0;
+        /* Debug: trace writes to sprite attribute flag ($101B20 + n*$16) */
+        if (addr == 0x101B20 && val != 0) {
+            fprintf(stderr, "[SPR-FLAG] $%06X = $%04X !!\n", addr, val);
+            fflush(stderr);
+        }
         write16_be(s_wram + (addr & 0xFFFF), val);
         return;
     }
