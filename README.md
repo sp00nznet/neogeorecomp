@@ -117,8 +117,14 @@ This produces `libneogeorecomp.a` (or `.lib` on Windows) — a static library th
 
 | Game | Developer | Year | Status | Repository |
 |------|-----------|------|--------|------------|
-| [Metal Slug: Super Vehicle-001](https://github.com/sp00nznet/metalslug) | Nazca Corporation | 1996 | In Progress | `sp00nznet/metalslug` |
-| [Neo Drift Out: New Technology](https://github.com/sp00nznet/neodriftout) | Visco Corporation | 1996 | In Progress | `sp00nznet/neodriftout` |
+| [Metal Slug: Super Vehicle-001](https://github.com/sp00nznet/metalslug) | Nazca Corporation | 1996 | Scaffolding | `sp00nznet/metalslug` |
+| [Neo Drift Out: New Technology](https://github.com/sp00nznet/neodriftout) | Visco Corporation | 1996 | **Rendering game text** | `sp00nznet/neodriftout` |
+
+### Neo Drift Out Progress
+
+Neo Drift Out is the first game to render through this runtime. The complete 2 MB P ROM has been statically recompiled into **6,636 C functions** (~115K lines) using an automated 68k-to-C pipeline. The game boots, runs its state machine, loads palettes from ROM, and renders fix layer text through the S ROM tile decoder.
+
+![Neo Drift Out Screenshot](https://raw.githubusercontent.com/sp00nznet/neodriftout/master/docs/screenshot_proof_of_life.png)
 
 ## Neo Geo Memory Map
 
