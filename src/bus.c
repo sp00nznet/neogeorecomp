@@ -285,8 +285,21 @@ uint16_t bus_read16(uint32_t addr) {
                 if (val != 0) should_yield = true;
             }
 
-            /* Palette ring buffer: only yield when genuinely spinning
-             * (not during bulk palette init which causes false positives) */
+            /* Palette ring buffer: detect genuine spin-waits by checking
+             * if the same address is read twice in a row with a non-zero value.
+             * This avoids false-positive yields during bulk palette init. */
+            if (addr >= 0x101700 && addr < 0x101B20) {
+                static uint32_t s_last_pal_addr = 0;
+                static int s_pal_repeat = 0;
+                uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
+                if (val != 0 && addr == s_last_pal_addr) {
+                    s_pal_repeat++;
+                    if (s_pal_repeat >= 2) should_yield = true;
+                } else {
+                    s_pal_repeat = 0;
+                }
+                s_last_pal_addr = addr;
+            }
 
             if (should_yield && !s_in_yield) {
                 s_in_yield = true;
