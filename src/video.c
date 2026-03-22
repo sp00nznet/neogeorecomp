@@ -25,7 +25,7 @@
 
 /* ----- Internal State ----- */
 
-static uint16_t s_vram[NEOGEO_VRAM_SIZE / 2];  /* VRAM (word-addressed) */
+static uint16_t s_vram[NEOGEO_VRAM_SIZE];  /* VRAM (word-addressed) */
 static uint16_t s_vram_addr = 0;               /* Current VRAM address */
 static int16_t  s_vram_mod = 0;                /* Auto-increment value */
 static uint16_t s_lspc_mode = 0;               /* LSPC mode register */
@@ -143,7 +143,7 @@ void video_set_vram_addr(uint16_t addr) {
 
 uint16_t video_read_vram(void) {
     uint16_t val = 0;
-    if (s_vram_addr < NEOGEO_VRAM_SIZE / 2) {
+    if (s_vram_addr < NEOGEO_VRAM_SIZE) {
         val = s_vram[s_vram_addr];
     }
     s_vram_addr = (uint16_t)(s_vram_addr + s_vram_mod);
@@ -151,7 +151,7 @@ uint16_t video_read_vram(void) {
 }
 
 void video_write_vram(uint16_t val) {
-    if (s_vram_addr < NEOGEO_VRAM_SIZE / 2) {
+    if (s_vram_addr < NEOGEO_VRAM_SIZE) {
         s_vram[s_vram_addr] = val;
     }
     s_vram_addr = (uint16_t)(s_vram_addr + s_vram_mod);
@@ -338,9 +338,9 @@ void video_render_frame(uint32_t *framebuffer) {
     int chain_y = 0;
 
     for (int spr = NEOGEO_MAX_SPRITES - 1; spr >= 0; spr--) {
-        uint16_t scb3 = s_vram[0x8200 / 2 + spr];
-        uint16_t scb4 = s_vram[0x8400 / 2 + spr];
-        uint16_t scb2 = s_vram[0x8000 / 2 + spr];
+        uint16_t scb3 = s_vram[0x8200 + spr];
+        uint16_t scb4 = s_vram[0x8400 + spr];
+        uint16_t scb2 = s_vram[0x8000 + spr];
 
         /*
          * SCB3 format:
@@ -420,7 +420,7 @@ void video_render_frame(uint32_t *framebuffer) {
     /* Visible area: 40 x 28 tiles (NTSC), stored top-to-bottom, left-to-right */
     for (int col = 0; col < NEOGEO_FIX_COLS; col++) {
         for (int row = 0; row < NEOGEO_FIX_ROWS; row++) {
-            uint16_t fix_entry = s_vram[0x7000 / 2 + col * NEOGEO_FIX_ROWS + row];
+            uint16_t fix_entry = s_vram[0x7000 + col * NEOGEO_FIX_ROWS + row];
 
             uint16_t tile_num = fix_entry & 0x0FFF;
             uint8_t palette_idx = (fix_entry >> 12) & 0x0F;

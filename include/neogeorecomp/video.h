@@ -45,7 +45,16 @@ extern "C" {
 #define NEOGEO_MAX_SCANLINE_SPRITES 96
 #define NEOGEO_FIX_COLS       40
 #define NEOGEO_FIX_ROWS       32
-#define NEOGEO_VRAM_SIZE      0x8800  /* 68 KB: 64 KB lower + 4 KB upper */
+/*
+ * VRAM is word-addressed. The address space is:
+ *   $0000-$6FFF: SCB1 (sprite tilemaps, 381 sprites x 64 words)
+ *   $7000-$74FF: Fix layer (40x32 tiles)
+ *   $8000-$81FF: SCB2 (sprite shrink)
+ *   $8200-$83FF: SCB3 (sprite Y/height/sticky)
+ *   $8400-$85FF: SCB4 (sprite X)
+ * Total addressable: $8600 words. We round up for safety.
+ */
+#define NEOGEO_VRAM_SIZE      0x8800  /* Word count (not bytes) */
 
 /* ----- Initialization ----- */
 

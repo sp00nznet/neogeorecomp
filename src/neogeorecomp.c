@@ -244,30 +244,43 @@ bool neogeo_frame_yield(void) {
 
     s_frame_count++;
 
-    /* At frame 100: inject test sprite data directly into VRAM to verify renderer */
-    if (s_frame_count == 100) {
-        /* Write via VRAM port (same as hardware) */
-        /* SCB1: tile 16, palette 2 for sprite slot 1 */
-        video_set_vram_mod(1);
-        video_set_vram_addr(1 * 64);
-        video_write_vram(0x0010);  /* Tile 16 low */
-        video_write_vram(0x0200);  /* Palette 2, no flip, no auto-anim */
-        /* SCB3: Y=100, height=2 tiles */
-        video_set_vram_addr(0x8200 + 1);
-        video_write_vram(((496-100) << 7) | 2);
-        /* SCB4: X=100 */
-        video_set_vram_addr(0x8400 + 1);
-        video_write_vram(100 << 7);
-        /* SCB2: full shrink */
-        video_set_vram_addr(0x8000 + 1);
-        video_write_vram(0x0FFF);
-        /* Also set backdrop to dark blue */
+    /* Set backdrop to dark blue for visibility */
+    if (s_frame_count == 60) {
         palette_write(255 * 16 + 15, 0x100F);
-        printf("[neogeorecomp] Test sprite injected at slot 1, backdrop set to blue\n");
     }
 
-    /* Save a screenshot at frame 120 (~2 seconds in) */
-    if (s_frame_count == 120) {
+    /* Check SCB3 more carefully */
+    if (s_frame_count % 60 == 30) {
+        const uint16_t *vr = video_get_vram_ptr();
+        int scb3_nonzero = 0;
+        for (int i = 0; i < 381; i++) {
+            if (vr[0x8200/2 + i] != 0) scb3_nonzero++;
+        }
+        int scb1_nonzero = 0;
+        int first_scb1_addr = -1;
+        uint16_t first_scb1_val = 0;
+        for (int i = 0; i < 381 * 64 && scb1_nonzero < 5; i++) {
+            if (vr[i] != 0) {
+                if (first_scb1_addr < 0) { first_scb1_addr = i; first_scb1_val = vr[i]; }
+                scb1_nonzero++;
+            }
+        }
+        uint16_t swap_flag = bus_read16(0x102532);
+        uint16_t spr_flag = bus_read16(0x102224);
+        /* Check the double-buffer content */
+        uint32_t rd_buf = bus_read32(0x1025D2);
+        int buf_nonzero = 0;
+        for (int i = 0; i < 128; i++) {
+            if (bus_read16(rd_buf + i * 2) != 0) buf_nonzero++;
+        }
+        printf("[vram %d] SCB1=%d(@%d=$%04X) SCB3=%d swap=%d sprfl=%d\n",
+               s_frame_count, scb1_nonzero,
+               first_scb1_addr, first_scb1_val,
+               scb3_nonzero, swap_flag, spr_flag);
+    }
+
+    /* Save a screenshot at frame 300 (~5 seconds in) */
+    if (s_frame_count == 300) {
         FILE *bmp = fopen("screenshot.bmp", "wb");
         if (bmp) {
             /* BMP header for 320x224 32-bit */
@@ -389,6 +402,37 @@ void neogeo_begin_frame(void) {
 }
 
 void neogeo_trigger_vblank(void) {
+    /* TEMP: Write test sprites directly to VRAM to verify the
+     * entire render pipeline (tile decode + palette + compositing).
+     * Write a grid of tiles with different tile numbers and palettes. */
+    {
+        video_set_vram_mod(1);
+        for (int i = 0; i < 10; i++) {
+            int spr = i + 1;
+            int tile = 100 + i * 50;  /* Various C ROM tiles */
+            int pal = 2;              /* Palette 2 (has white in color 1) */
+            int x = 20 + (i % 5) * 60;
+            int y = 40 + (i / 5) * 40;
+
+            /* SCB1: tile + palette */
+            video_set_vram_addr(spr * 64);
+            video_write_vram(tile & 0xFFFF);
+            video_write_vram((pal & 0xFF) | ((tile >> 12) & 0xF000));
+
+            /* SCB3: position + height */
+            video_set_vram_addr(0x8200 + spr);
+            video_write_vram(((496 - y) << 7) | 1);
+
+            /* SCB4: X position */
+            video_set_vram_addr(0x8400 + spr);
+            video_write_vram(x << 7);
+
+            /* SCB2: full shrink */
+            video_set_vram_addr(0x8000 + spr);
+            video_write_vram(0x0FFF);
+        }
+    }
+
     /* Render the current VRAM state to the framebuffer */
     video_render_frame(s_framebuffer);
 
