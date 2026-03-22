@@ -253,7 +253,25 @@ bool neogeo_frame_yield(void) {
      * setting $10041A = 1. This triggers the title animation to exit
      * and advance to the racing demo. Must be set DURING the frame
      * (after USER clears it) for the gameplay dispatcher to see it. */
-    /* $10041A is set by the BIOS VBlank stub after 120 frames */
+    /* Check sprite object count and buffer data */
+    if (s_frame_count % 60 == 30) {
+        uint16_t spr_obj_count = bus_read16(0x1020A0);
+        uint16_t spr_list_count = bus_read16(0x1020A2);
+        uint16_t spr_upload = bus_read16(0x102224);
+        uint16_t vram_swap = bus_read16(0x102532);
+        /* Check if upload buffers have data */
+        uint16_t shrink0 = bus_read16(0x102230);
+        uint16_t ypos0 = bus_read16(0x102430);
+        uint16_t xpos0 = bus_read16(0x102330);
+        /* Check sprite attribute table */
+        uint16_t attr0_flag = bus_read16(0x101B20);
+        uint16_t attr0_ptr = bus_read16(0x101B22);
+        if (spr_list_count > 0 || spr_obj_count > 0 || attr0_flag > 0) {
+            printf("[spr] obj=%d lst=%d upl=%d swp=%d sh=$%04X y=$%04X x=$%04X attr=(%d,$%04X)\n",
+                   spr_obj_count, spr_list_count, spr_upload, vram_swap,
+                   shrink0, ypos0, xpos0, attr0_flag, attr0_ptr);
+        }
+    }
 
     /* Check SCB3 more carefully */
     if (s_frame_count % 60 == 30) {

@@ -147,7 +147,12 @@ bool platform_poll_input(void) {
                         if (pressed) io_insert_coin(0);
                         break;
                     case SDL_SCANCODE_1:
-                        /* Start button via status_b, handled differently */
+                        /* P1 Start — active low in status_b bit 1 */
+                        io_set_button(0, IO_BTN_START << 4, pressed);
+                        break;
+                    case SDL_SCANCODE_3:
+                        /* P1 Select */
+                        io_set_button(0, IO_BTN_SELECT << 4, pressed);
                         break;
 
                     case SDL_SCANCODE_F11:

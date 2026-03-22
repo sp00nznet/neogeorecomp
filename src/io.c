@@ -51,11 +51,22 @@ void io_update(void) {
 }
 
 void io_set_button(int player, uint8_t button, bool pressed) {
+    /* High nibble flags (0x10, 0x20) = start/select */
+    if (button & 0xF0) {
+        uint8_t ss_bit = button >> 4;
+        uint8_t mask = (player == 0) ? ss_bit : (ss_bit << 2);
+        if (pressed) {
+            s_start_select &= ~mask;
+        } else {
+            s_start_select |= mask;
+        }
+        return;
+    }
     uint8_t *state = (player == 0) ? &s_p1_controls : &s_p2_controls;
     if (pressed) {
-        *state &= ~button;  /* Active low: clear bit = pressed */
+        *state &= ~button;
     } else {
-        *state |= button;   /* Set bit = released */
+        *state |= button;
     }
 }
 
