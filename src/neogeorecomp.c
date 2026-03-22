@@ -416,7 +416,7 @@ void neogeo_begin_frame(void) {
 }
 
 void neogeo_trigger_vblank(void) {
-    /* (Test sprite injection removed — using game's own sprites now) */
+    /* (Time-based yield handled in func_table_call) */
 
     /* Render the current VRAM state to the framebuffer */
     video_render_frame(s_framebuffer);

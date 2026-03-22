@@ -7,6 +7,8 @@
  */
 
 #include <neogeorecomp/func_table.h>
+#include <neogeorecomp/neogeorecomp.h>
+#include <neogeorecomp/platform.h>
 #include <neogeorecomp/debug.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -80,6 +82,18 @@ static uint32_t s_miss_count = 0;
 void func_table_call(uint32_t addr) {
     neogeo_func_t func = func_table_lookup(addr);
     s_call_count++;
+
+    /* Time-based yield: if >20ms since last frame yield, force one.
+     * This catches any spin-wait pattern regardless of bus access. */
+    {
+        static uint64_t s_last_yield = 0;
+        uint64_t now = platform_get_ticks();
+        if (s_last_yield == 0) s_last_yield = now;
+        if (now - s_last_yield > 17) {  /* >17ms = ~60fps */
+            s_last_yield = now;
+            neogeo_frame_yield();
+        }
+    }
 
     /* Early boot logging: print first 50 calls to trace execution */
     if (s_call_count <= 5000 && (s_call_count <= 10 || s_call_count % 500 == 0)) {

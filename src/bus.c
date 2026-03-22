@@ -353,30 +353,27 @@ uint16_t bus_read16(uint32_t addr) {
     return 0xFFFF;
 }
 
+/*
+ * Generic spin-wait detection: tracks total Work RAM reads without
+ * any bus writes happening. When reads exceed a threshold without
+ * any writes (indicating a pure polling loop), yield to VBlank.
+ */
+static int s_reads_without_write = 0;
+
 uint32_t bus_read32(uint32_t addr) {
-    /*
-     * Generic 32-bit spin-wait detection for Work RAM.
-     * When the game reads the same 32-bit address 50+ times in a row
-     * (e.g., tst.l for palette ring buffer, sprite upload flag),
-     * yield to fire VBlank and break the spin.
-     */
-    static uint32_t s_last_r32 = 0;
-    static int s_r32_repeat = 0;
-    if (addr == s_last_r32 && addr >= 0x100000 && addr < 0x110000) {
-        s_r32_repeat++;
-        if (s_r32_repeat >= 50) {
+    /* Count reads in Work RAM range */
+    if (addr >= 0x100000 && addr < 0x110000) {
+        s_reads_without_write += 2;  /* bus_read32 = 2 word reads */
+        if (s_reads_without_write >= 200) {
             static bool s_in32 = false;
             if (!s_in32) {
                 s_in32 = true;
                 neogeo_frame_yield();
                 s_in32 = false;
-                s_r32_repeat = 0;
             }
+            s_reads_without_write = 0;
         }
-    } else {
-        s_r32_repeat = 0;
     }
-    s_last_r32 = addr;
 
     return ((uint32_t)bus_read16(addr) << 16) | bus_read16(addr + 2);
 }
@@ -433,6 +430,7 @@ void bus_write16(uint32_t addr, uint16_t val) {
 
     if (addr < 0x100000) return;  /* P ROM is read-only */
     if (addr < 0x200000) {
+        s_reads_without_write = 0;  /* Reset spin detector on any write */
         write16_be(s_wram + (addr & 0xFFFF), val);
         return;
     }
