@@ -268,6 +268,15 @@ uint16_t bus_read16(uint32_t addr) {
             if (addr == 0x100424) {
                 uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
                 if (val == 0) should_yield = true;
+                /* After the frame yield sets $100424 = 1 and the dispatcher
+                 * reads it, also set $10041A = 1 to simulate demo timer.
+                 * This must happen HERE (inside the dispatcher's loop) because
+                 * USER clears $10041A at the start of each frame. */
+                static int s_bus_frame = 0;
+                if (val == 1) s_bus_frame++;
+                if (val == 1 && s_bus_frame >= 120) {
+                    write16_be(s_wram + 0x041A, 0x0001);
+                }
             }
 
             /* Sprite upload flag: game spins waiting for VBlank to clear it */
@@ -276,11 +285,8 @@ uint16_t bus_read16(uint32_t addr) {
                 if (val != 0) should_yield = true;
             }
 
-            /* Palette ring buffer: game spins on tst.l (a5) waiting for slot to be free */
-            if (addr >= 0x101700 && addr < 0x101B20) {
-                uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
-                if (val != 0) should_yield = true;
-            }
+            /* Palette ring buffer: only yield when genuinely spinning
+             * (not during bulk palette init which causes false positives) */
 
             if (should_yield && !s_in_yield) {
                 s_in_yield = true;

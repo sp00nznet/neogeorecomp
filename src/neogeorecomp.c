@@ -249,7 +249,11 @@ bool neogeo_frame_yield(void) {
         video_set_fix_source(false);  /* Use cart S ROM */
     }
 
-    /* (No forced palette — using game's own palette data) */
+    /* After 120 frames (~2 sec), simulate a start button press by
+     * setting $10041A = 1. This triggers the title animation to exit
+     * and advance to the racing demo. Must be set DURING the frame
+     * (after USER clears it) for the gameplay dispatcher to see it. */
+    /* $10041A is set by the BIOS VBlank stub after 120 frames */
 
     /* Check SCB3 more carefully */
     if (s_frame_count % 60 == 30) {
