@@ -283,38 +283,53 @@ static void decode_fix_tile(
 
     /*
      * Neo Geo S ROM fix layer tile format: 8x8, 4bpp, nibble-packed.
-     * 32 bytes per tile. 4 bytes per row, 8 rows.
-     * Each byte contains 2 pixels: high nibble = left, low nibble = right.
+     * 32 bytes per tile, stored in 4 groups of 8 bytes.
      *
-     * Row layout: byte[row*4 + 0] = pixels 0,1
-     *             byte[row*4 + 1] = pixels 2,3
-     *             byte[row*4 + 2] = pixels 4,5
-     *             byte[row*4 + 3] = pixels 6,7
+     * Column order is SCRAMBLED in hardware:
+     *   Group 0 (bytes 0-7):   columns x=4, x=5
+     *   Group 1 (bytes 8-15):  columns x=6, x=7
+     *   Group 2 (bytes 16-23): columns x=0, x=1
+     *   Group 3 (bytes 24-31): columns x=2, x=3
+     *
+     * Within each group: 8 bytes = 8 rows (top to bottom).
+     * Each byte: high nibble = left column pixel, low nibble = right column pixel.
      */
     uint32_t offset = ((uint32_t)tile_num * 32) % rom_size;
     const uint8_t *tile = rom + offset;
 
     int pal_base = palette_idx * 16;
 
-    for (int row = 0; row < 8; row++) {
-        int py = screen_y + row;
-        if (py < 0 || py >= NEOGEO_SCREEN_HEIGHT) continue;
+    /* Column pair mapping: group -> (left_x, right_x) */
+    static const int col_map[4][2] = {{4,5}, {6,7}, {0,1}, {2,3}};
 
-        const uint8_t *row_data = tile + row * 4;
+    for (int group = 0; group < 4; group++) {
+        int x_left  = col_map[group][0];
+        int x_right = col_map[group][1];
 
-        for (int col = 0; col < 8; col++) {
-            int px = screen_x + col;
-            if (px < 0 || px >= NEOGEO_SCREEN_WIDTH) continue;
+        for (int row = 0; row < 8; row++) {
+            int py = screen_y + row;
+            if (py < 0 || py >= NEOGEO_SCREEN_HEIGHT) continue;
 
-            /* Each byte has 2 pixels: high nibble = even col, low nibble = odd col */
-            uint8_t byte_val = row_data[col / 2];
-            uint8_t pixel = (col & 1) ? (byte_val & 0x0F) : (byte_val >> 4);
+            uint8_t byte_val = tile[group * 8 + row];
+            uint8_t pix_left  = (byte_val >> 4) & 0x0F;
+            uint8_t pix_right = byte_val & 0x0F;
 
-            if (pixel == 0) continue;
-
-            uint32_t color = argb_palette[pal_base + pixel];
-            if ((color & 0xFF000000) == 0) continue;
-            framebuffer[py * NEOGEO_SCREEN_WIDTH + px] = color;
+            if (pix_left != 0) {
+                int px = screen_x + x_left;
+                if (px >= 0 && px < NEOGEO_SCREEN_WIDTH) {
+                    uint32_t color = argb_palette[pal_base + pix_left];
+                    if (color & 0xFF000000)
+                        framebuffer[py * NEOGEO_SCREEN_WIDTH + px] = color;
+                }
+            }
+            if (pix_right != 0) {
+                int px = screen_x + x_right;
+                if (px >= 0 && px < NEOGEO_SCREEN_WIDTH) {
+                    uint32_t color = argb_palette[pal_base + pix_right];
+                    if (color & 0xFF000000)
+                        framebuffer[py * NEOGEO_SCREEN_WIDTH + px] = color;
+                }
+            }
         }
     }
 }
