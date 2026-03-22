@@ -285,20 +285,28 @@ uint16_t bus_read16(uint32_t addr) {
                 if (val != 0) should_yield = true;
             }
 
-            /* Palette ring buffer: detect genuine spin-waits by checking
-             * if the same address is read twice in a row with a non-zero value.
-             * This avoids false-positive yields during bulk palette init. */
+            /* Palette ring buffer: when the game's palette write function
+             * ($012036) spins waiting for a free slot, we process the
+             * pending entry immediately instead of waiting for VBlank.
+             * The entry format is: 4-byte dest pointer + 32 bytes of palette data.
+             * We copy the palette data to its destination and clear the slot. */
             if (addr >= 0x101700 && addr < 0x101B20) {
-                static uint32_t s_last_pal_addr = 0;
-                static int s_pal_repeat = 0;
-                uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
-                if (val != 0 && addr == s_last_pal_addr) {
-                    s_pal_repeat++;
-                    if (s_pal_repeat >= 2) should_yield = true;
-                } else {
-                    s_pal_repeat = 0;
+                uint32_t slot_base = addr & ~0x3u;  /* Align to slot start */
+                uint16_t hi = read16_be(s_wram + (slot_base & 0xFFFF));
+                uint16_t lo = read16_be(s_wram + ((slot_base + 2) & 0xFFFF));
+                uint32_t dest_ptr = ((uint32_t)hi << 16) | lo;
+                if (dest_ptr != 0 && dest_ptr >= 0x400000 && dest_ptr < 0x402000) {
+                    /* Valid palette destination — process the entry inline */
+                    uint32_t src = slot_base + 4;
+                    for (int i = 0; i < 16; i++) {
+                        uint16_t color = read16_be(s_wram + ((src + i * 2) & 0xFFFF));
+                        palette_write((dest_ptr - 0x400000) / 2 + i, color);
+                    }
+                    /* Clear the slot */
+                    write16_be(s_wram + (slot_base & 0xFFFF), 0);
+                    write16_be(s_wram + ((slot_base + 2) & 0xFFFF), 0);
+                    return 0;  /* Slot is now free */
                 }
-                s_last_pal_addr = addr;
             }
 
             if (should_yield && !s_in_yield) {
@@ -346,6 +354,30 @@ uint16_t bus_read16(uint32_t addr) {
 }
 
 uint32_t bus_read32(uint32_t addr) {
+    /*
+     * Generic 32-bit spin-wait detection for Work RAM.
+     * When the game reads the same 32-bit address 50+ times in a row
+     * (e.g., tst.l for palette ring buffer, sprite upload flag),
+     * yield to fire VBlank and break the spin.
+     */
+    static uint32_t s_last_r32 = 0;
+    static int s_r32_repeat = 0;
+    if (addr == s_last_r32 && addr >= 0x100000 && addr < 0x110000) {
+        s_r32_repeat++;
+        if (s_r32_repeat >= 50) {
+            static bool s_in32 = false;
+            if (!s_in32) {
+                s_in32 = true;
+                neogeo_frame_yield();
+                s_in32 = false;
+                s_r32_repeat = 0;
+            }
+        }
+    } else {
+        s_r32_repeat = 0;
+    }
+    s_last_r32 = addr;
+
     return ((uint32_t)bus_read16(addr) << 16) | bus_read16(addr + 2);
 }
 
