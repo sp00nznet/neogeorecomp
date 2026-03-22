@@ -242,8 +242,55 @@ bool neogeo_frame_yield(void) {
     neogeo_trigger_vblank();
     neogeo_end_frame();
 
-    /* Diagnostic: log state every 60 frames (~1 second) */
     s_frame_count++;
+
+    /* At frame 100: inject test sprite data directly into VRAM to verify renderer */
+    if (s_frame_count == 100) {
+        /* Write via VRAM port (same as hardware) */
+        /* SCB1: tile 16, palette 2 for sprite slot 1 */
+        video_set_vram_mod(1);
+        video_set_vram_addr(1 * 64);
+        video_write_vram(0x0010);  /* Tile 16 low */
+        video_write_vram(0x0200);  /* Palette 2, no flip, no auto-anim */
+        /* SCB3: Y=100, height=2 tiles */
+        video_set_vram_addr(0x8200 + 1);
+        video_write_vram(((496-100) << 7) | 2);
+        /* SCB4: X=100 */
+        video_set_vram_addr(0x8400 + 1);
+        video_write_vram(100 << 7);
+        /* SCB2: full shrink */
+        video_set_vram_addr(0x8000 + 1);
+        video_write_vram(0x0FFF);
+        /* Also set backdrop to dark blue */
+        palette_write(255 * 16 + 15, 0x100F);
+        printf("[neogeorecomp] Test sprite injected at slot 1, backdrop set to blue\n");
+    }
+
+    /* Save a screenshot at frame 120 (~2 seconds in) */
+    if (s_frame_count == 120) {
+        FILE *bmp = fopen("screenshot.bmp", "wb");
+        if (bmp) {
+            /* BMP header for 320x224 32-bit */
+            uint32_t pixel_size = NEOGEO_SCREEN_WIDTH * NEOGEO_SCREEN_HEIGHT * 4;
+            uint32_t file_size = 54 + pixel_size;
+            uint8_t header[54] = {0};
+            header[0] = 'B'; header[1] = 'M';
+            *(uint32_t*)(header+2) = file_size;
+            *(uint32_t*)(header+10) = 54;
+            *(uint32_t*)(header+14) = 40;
+            *(int32_t*)(header+18) = NEOGEO_SCREEN_WIDTH;
+            *(int32_t*)(header+22) = -NEOGEO_SCREEN_HEIGHT; /* top-down */
+            *(uint16_t*)(header+26) = 1;
+            *(uint16_t*)(header+28) = 32;
+            *(uint32_t*)(header+34) = pixel_size;
+            fwrite(header, 1, 54, bmp);
+            fwrite(s_framebuffer, 4, NEOGEO_SCREEN_WIDTH * NEOGEO_SCREEN_HEIGHT, bmp);
+            fclose(bmp);
+            printf("[neogeorecomp] Screenshot saved to screenshot.bmp\n");
+        }
+    }
+
+    /* Diagnostic: log state every 60 frames (~1 second) */
     if (s_frame_count % 60 == 1) {
         uint8_t game_state = bus_read8(0x10FDAE);
         uint16_t sub_state = bus_read16(0x100426);
