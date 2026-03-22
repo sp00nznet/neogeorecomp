@@ -244,9 +244,20 @@ bool neogeo_frame_yield(void) {
 
     s_frame_count++;
 
-    /* Set backdrop to dark blue for visibility */
+    /* Force cartridge fix tiles (the game's S ROM, not BIOS SFIX) */
+    if (s_frame_count == 1) {
+        video_set_fix_source(false);  /* Use cart S ROM */
+    }
+
+    /* Set backdrop + fix layer palette for visibility */
     if (s_frame_count == 60) {
-        palette_write(255 * 16 + 15, 0x100F);
+        palette_write(255 * 16 + 15, 0x100F);  /* Backdrop: dark blue */
+        /* Force palette 9 with a gradient so all color indices are visible */
+        for (int c = 1; c < 16; c++) {
+            uint16_t brightness = (uint16_t)(c * 2);  /* 2-30 range */
+            uint16_t neo_color = (brightness << 8) | (brightness << 4) | brightness;
+            palette_write(9 * 16 + c, neo_color | 0x8000);  /* With dark bit */
+        }
     }
 
     /* Check SCB3 more carefully */
@@ -328,10 +339,18 @@ bool neogeo_frame_yield(void) {
             if (vram[i] != 0) { vram_nonzero++; break; }
         }
 
-        /* Check fix layer */
+        /* Check fix layer (VRAM $7000 to $7500, word-addressed) */
         int fix_nonzero = 0;
-        for (int i = 0x7000/2; i < 0x7500/2; i++) {
-            if (vram[i] != 0) { fix_nonzero++; }
+        int fix_text = 0;  /* Non-space entries */
+        uint16_t fix_sample = 0;
+        for (int i = 0x7000; i < 0x7500; i++) {
+            if (vram[i] != 0) {
+                fix_nonzero++;
+                if (vram[i] != 0x0020) {
+                    fix_text++;
+                    if (fix_sample == 0) fix_sample = vram[i];
+                }
+            }
         }
 
         /* Check palette RAM for any non-zero colors */
@@ -375,11 +394,11 @@ bool neogeo_frame_yield(void) {
             }
         }
 
-        printf("[frame %d] st=%d sub=%d anim=%d scrl=%d spr=%d palN=%d 1stPal=%d 1stCol=$%04X vram=%s fix=%d\n",
+        /* Check palette 9 specifically (used by fix layer text) */
+        uint16_t pal9_c1 = palette_read(9 * 16 + 1);
+        printf("[frame %d] st=%d sub=%d spr=%d pal=%d fix=%d txt=%d(s=$%04X) p9c1=$%04X\n",
                s_frame_count, game_state, sub_state,
-               anim_sub, scroll_pos, active_sprites,
-               total_pal, first_pal, first_color,
-               vram_nonzero ? "Y" : "N", fix_nonzero);
+               active_sprites, total_pal, fix_nonzero, fix_text, fix_sample, pal9_c1);
         if (0) /* suppress original */
         printf("[frame %d] state=%d sub=%d vbl=$%02X ready=%d sprites=%d pal0c1=$%04X backdrop=$%04X\n",
                s_frame_count, game_state, sub_state, vbl_flag, frame_ready,
@@ -402,36 +421,7 @@ void neogeo_begin_frame(void) {
 }
 
 void neogeo_trigger_vblank(void) {
-    /* TEMP: Write test sprites directly to VRAM to verify the
-     * entire render pipeline (tile decode + palette + compositing).
-     * Write a grid of tiles with different tile numbers and palettes. */
-    {
-        video_set_vram_mod(1);
-        for (int i = 0; i < 10; i++) {
-            int spr = i + 1;
-            int tile = 100 + i * 50;  /* Various C ROM tiles */
-            int pal = 2;              /* Palette 2 (has white in color 1) */
-            int x = 20 + (i % 5) * 60;
-            int y = 40 + (i / 5) * 40;
-
-            /* SCB1: tile + palette */
-            video_set_vram_addr(spr * 64);
-            video_write_vram(tile & 0xFFFF);
-            video_write_vram((pal & 0xFF) | ((tile >> 12) & 0xF000));
-
-            /* SCB3: position + height */
-            video_set_vram_addr(0x8200 + spr);
-            video_write_vram(((496 - y) << 7) | 1);
-
-            /* SCB4: X position */
-            video_set_vram_addr(0x8400 + spr);
-            video_write_vram(x << 7);
-
-            /* SCB2: full shrink */
-            video_set_vram_addr(0x8000 + spr);
-            video_write_vram(0x0FFF);
-        }
-    }
+    /* (Test sprite injection removed — using game's own sprites now) */
 
     /* Render the current VRAM state to the framebuffer */
     video_render_frame(s_framebuffer);
