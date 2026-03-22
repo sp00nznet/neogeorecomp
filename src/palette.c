@@ -52,10 +52,13 @@ uint32_t palette_neo_to_argb(uint16_t neo_color) {
 static void rebuild_argb_table(void) {
     int total = NEOGEO_NUM_PALETTES * NEOGEO_COLORS_PER_PAL;
     for (int i = 0; i < total; i++) {
-        s_argb_table[i] = palette_neo_to_argb(s_palram[s_active_bank][i]);
+        /* Color index 0 of every palette is always transparent */
+        if ((i & 0xF) == 0) {
+            s_argb_table[i] = 0x00000000;
+        } else {
+            s_argb_table[i] = palette_neo_to_argb(s_palram[s_active_bank][i]);
+        }
     }
-    /* Color 0 of palette 0 is always transparent/black */
-    s_argb_table[0] = 0x00000000;
 }
 
 /* ----- Initialization ----- */
@@ -82,8 +85,8 @@ void palette_write(uint32_t offset, uint16_t val) {
     if (offset >= NEOGEO_NUM_PALETTES * NEOGEO_COLORS_PER_PAL) return;
     s_palram[s_active_bank][offset] = val;
     /* Update the ARGB cache for this entry */
-    if (offset == 0) {
-        s_argb_table[0] = 0x00000000;  /* Always transparent */
+    if ((offset & 0xF) == 0) {
+        s_argb_table[offset] = 0x00000000;  /* Color 0 of every palette = transparent */
     } else {
         s_argb_table[offset] = palette_neo_to_argb(val);
     }

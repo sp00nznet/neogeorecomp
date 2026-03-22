@@ -249,16 +249,7 @@ bool neogeo_frame_yield(void) {
         video_set_fix_source(false);  /* Use cart S ROM */
     }
 
-    /* Set backdrop + fix layer palette for visibility */
-    if (s_frame_count == 60) {
-        palette_write(255 * 16 + 15, 0x100F);  /* Backdrop: dark blue */
-        /* Force palette 9 with a gradient so all color indices are visible */
-        for (int c = 1; c < 16; c++) {
-            uint16_t brightness = (uint16_t)(c * 2);  /* 2-30 range */
-            uint16_t neo_color = (brightness << 8) | (brightness << 4) | brightness;
-            palette_write(9 * 16 + c, neo_color | 0x8000);  /* With dark bit */
-        }
-    }
+    /* (No forced palette — using game's own palette data) */
 
     /* Check SCB3 more carefully */
     if (s_frame_count % 60 == 30) {

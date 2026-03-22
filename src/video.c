@@ -257,6 +257,7 @@ static void decode_sprite_tile(
             if (pixel == 0) continue;
 
             uint32_t color = argb_palette[pal_base + pixel];
+            if ((color & 0xFF000000) == 0) continue;  /* Transparent ARGB */
             framebuffer[py * NEOGEO_SCREEN_WIDTH + px] = color;
         }
     }
@@ -304,6 +305,7 @@ static void decode_fix_tile(
             if (pixel == 0) continue;  /* Transparent */
 
             uint32_t color = argb_palette[pal_base + pixel];
+            if ((color & 0xFF000000) == 0) continue;  /* Transparent ARGB */
             framebuffer[py * NEOGEO_SCREEN_WIDTH + px] = color;
         }
     }
