@@ -250,17 +250,42 @@ uint16_t bus_read16(uint32_t addr) {
          * This is how we simulate the 68000's interrupt-driven VBlank
          * without actual interrupts.
          */
-        if (addr == 0x100424) {
-            uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
-            if (val == 0) {
-                /* Prevent recursion: VBlank handler also reads $100424.
-                 * Only yield if we're not already inside a yield. */
-                static bool s_in_yield = false;
-                if (!s_in_yield) {
-                    s_in_yield = true;
-                    neogeo_frame_yield();
-                    s_in_yield = false;
-                }
+        /*
+         * VBlank simulation hooks:
+         * On real hardware, VBlank fires as an interrupt ~60 times/sec.
+         * In our recomp, we detect spin-wait patterns and yield to fire
+         * VBlank, render, and present.
+         *
+         * Known spin-wait patterns:
+         *  1. $100424: gameplay dispatcher waits for VBlank to set frame-ready flag
+         *  2. $101700-$101B14: palette DMA ring buffer — game waits for VBlank
+         *     to drain entries before writing new ones
+         */
+        {
+            static bool s_in_yield = false;
+            bool should_yield = false;
+
+            if (addr == 0x100424) {
+                uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
+                if (val == 0) should_yield = true;
+            }
+
+            /* Sprite upload flag: game spins waiting for VBlank to clear it */
+            if (addr == 0x102224) {
+                uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
+                if (val != 0) should_yield = true;
+            }
+
+            /* Palette ring buffer: game spins on tst.l (a5) waiting for slot to be free */
+            if (addr >= 0x101700 && addr < 0x101B20) {
+                uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
+                if (val != 0) should_yield = true;
+            }
+
+            if (should_yield && !s_in_yield) {
+                s_in_yield = true;
+                neogeo_frame_yield();
+                s_in_yield = false;
                 return read16_be(s_wram + (addr & 0xFFFF));
             }
         }

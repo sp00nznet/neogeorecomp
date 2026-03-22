@@ -280,17 +280,46 @@ bool neogeo_frame_yield(void) {
             if (palette_read(i) != 0) { pal_nonzero++; break; }
         }
 
+        /* Animation state */
+        uint32_t anim_ptr = bus_read32(0x100472);
+        uint16_t anim_sub = bus_read16(0x10048A);
+        uint16_t scroll_pos = bus_read16(0x10047C);
+        uint16_t flag_41A = bus_read16(0x10041A);
+
         uint32_t vram_read_ptr = bus_read32(0x1025D2);
         uint32_t vram_write_ptr = bus_read32(0x1025D6);
         uint16_t vram_swap = bus_read16(0x102532);
         uint16_t spr_flag = bus_read16(0x102224);
 
-        printf("[frame %d] st=%d sub=%d spr=%d pal=%s vram=%s fix=%d swap=%d rdp=$%06X wrp=$%06X sprfl=%d\n",
+        /* Count total non-zero palette entries */
+        int total_pal = 0;
+        for (int i = 0; i < 256*16; i++) {
+            if (palette_read(i) != 0) total_pal++;
+        }
+
+        /* Sample some actual palette colors */
+        uint16_t pal_sample[4] = {
+            palette_read(0*16 + 1),   /* Pal 0 color 1 */
+            palette_read(1*16 + 1),   /* Pal 1 color 1 */
+            palette_read(16*16 + 1),  /* Pal 16 color 1 */
+            palette_read(255*16+15),  /* Last color (backdrop) */
+        };
+
+        /* Find first palette with non-zero data */
+        int first_pal = -1;
+        uint16_t first_color = 0;
+        for (int p = 0; p < 256 && first_pal < 0; p++) {
+            for (int c = 1; c < 16; c++) {
+                uint16_t v = palette_read(p * 16 + c);
+                if (v != 0) { first_pal = p; first_color = v; break; }
+            }
+        }
+
+        printf("[frame %d] st=%d sub=%d anim=%d scrl=%d spr=%d palN=%d 1stPal=%d 1stCol=$%04X vram=%s fix=%d\n",
                s_frame_count, game_state, sub_state,
-               active_sprites,
-               pal_nonzero ? "Y" : "N",
-               vram_nonzero ? "Y" : "N", fix_nonzero, vram_swap,
-               vram_read_ptr, vram_write_ptr, spr_flag);
+               anim_sub, scroll_pos, active_sprites,
+               total_pal, first_pal, first_color,
+               vram_nonzero ? "Y" : "N", fix_nonzero);
         if (0) /* suppress original */
         printf("[frame %d] state=%d sub=%d vbl=$%02X ready=%d sprites=%d pal0c1=$%04X backdrop=$%04X\n",
                s_frame_count, game_state, sub_state, vbl_flag, frame_ready,
