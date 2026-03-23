@@ -467,7 +467,7 @@ void neogeo_trigger_vblank(void) {
     /* Dump active sprite details once */
     {
         static int s_dump = 0;
-        if (!s_dump) {
+        if (!s_dump && s_frame_count > 250) {
             const uint16_t *vr = video_get_vram_ptr();
             int active = 0;
             for (int i = 0; i < 381; i++)
@@ -489,6 +489,21 @@ void neogeo_trigger_vblank(void) {
                            spr, tn, t1&0xFF, x, sy, h, scb2);
                 }
                 fflush(stdout);
+            }
+        }
+    }
+
+    /* HACK: Force visible palette for sprites with tile data but pal=0 */
+    {
+        uint16_t *vw = (uint16_t *)video_get_vram_ptr(); /* cast away const for hack */
+        for (int spr = 0; spr < 381; spr++) {
+            uint16_t scb3 = vw[0x8200 + spr];
+            if ((scb3 & 0x3F) == 0) continue;
+            uint16_t tile_lo = vw[spr * 64];
+            uint16_t tile_hi = vw[spr * 64 + 1];
+            if (tile_lo != 0 && (tile_hi & 0xFF) == 0) {
+                /* Has tile but no palette — force palette 2 */
+                vw[spr * 64 + 1] = (tile_hi & 0xFF00) | 0x02;
             }
         }
     }

@@ -280,7 +280,7 @@ uint16_t bus_read16(uint32_t addr) {
             }
 
             /* Sprite upload flag: game spins waiting for VBlank to clear it */
-            if (addr == 0x102224) {
+            if (addr == 0x102224 || addr == 0x102532) {
                 uint16_t val = read16_be(s_wram + (addr & 0xFFFF));
                 if (val != 0) should_yield = true;
             }
