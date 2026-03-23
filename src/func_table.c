@@ -97,7 +97,9 @@ void func_table_call(uint32_t addr) {
 
     /* Trace sprite-related functions */
     if (addr == 0x012202 || addr == 0x01348E || addr == 0x007F32 ||
-        addr == 0x00805C || addr == 0x008172 || addr == 0x007E1C) {
+        addr == 0x00805C || addr == 0x008172 || addr == 0x007E1C ||
+        addr == 0x012256 || addr == 0x01225C || addr == 0x012270 ||
+        addr == 0x00802A || addr == 0x013546) {
         fprintf(stderr, "[TRACE] $%06X (call #%u)\n", addr, s_call_count);
         fflush(stderr);
     }
