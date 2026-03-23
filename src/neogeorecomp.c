@@ -527,22 +527,19 @@ void neogeo_trigger_vblank(void) {
         }
     }
 
-    /* Fix sprite palettes: force pal=2 on any active sprite with pal=0.
-     * The game's tilemap write functions don't set the palette field
-     * in the SCB1 attribute word. Palette 2 has visible colors. */
+    /* Palette preservation is now handled in the $01229E override.
+     * Fallback: if a sprite tile still has pal=0, use palette 66. */
     {
         uint16_t *vw = (uint16_t *)video_get_vram_ptr();
         for (int spr = 0; spr < 381; spr++) {
             uint16_t scb3 = vw[0x8200 + spr];
-            if ((scb3 & 0x3F) == 0) continue;  /* No height = invisible */
-            /* Check each tile row's attribute word */
+            if ((scb3 & 0x3F) == 0) continue;
             int height = scb3 & 0x3F;
             if (height > 32) height = 32;
             for (int t = 0; t < height; t++) {
                 uint16_t tile_lo = vw[spr * 64 + t * 2];
                 uint16_t tile_hi = vw[spr * 64 + t * 2 + 1];
                 if (tile_lo != 0 && (tile_hi & 0xFF) == 0) {
-                    /* Use palette 66 (varied game colors) for visibility */
                     vw[spr * 64 + t * 2 + 1] = (tile_hi & 0xFF00) | 66;
                 }
             }
