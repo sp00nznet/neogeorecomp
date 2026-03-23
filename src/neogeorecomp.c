@@ -493,6 +493,17 @@ void neogeo_trigger_vblank(void) {
         }
     }
 
+    /* Fix sprite shrink: force all active sprites to full size */
+    {
+        uint16_t *vw = (uint16_t *)video_get_vram_ptr();
+        for (int spr = 0; spr < 381; spr++) {
+            uint16_t scb3 = vw[0x8200 + spr];
+            if ((scb3 & 0x3F) != 0 && vw[0x8000 + spr] == 0) {
+                vw[0x8000 + spr] = 0x0FFF;  /* Full V and H shrink */
+            }
+        }
+    }
+
     /* Fix sprite palettes: the game writes SCB1 tile data without the
      * palette field (the $0133A0 overwrite issue). Look up the palette
      * from the sprite object's tile base (offset +2) and apply it to
