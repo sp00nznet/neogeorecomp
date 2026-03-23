@@ -244,16 +244,10 @@ bool neogeo_frame_yield(void) {
 
     s_frame_count++;
 
-    /* Force cartridge fix tiles (the game's S ROM, not BIOS SFIX) */
-    if (s_frame_count == 1) {
-        video_set_fix_source(false);  /* Use cart S ROM */
-    }
+    /* Force cartridge fix tiles every frame (game may reset to BIOS) */
+    video_set_fix_source(false);
 
-    /* After 120 frames (~2 sec), simulate a start button press by
-     * setting $10041A = 1. This triggers the title animation to exit
-     * and advance to the racing demo. Must be set DURING the frame
-     * (after USER clears it) for the gameplay dispatcher to see it. */
-    /* (Sprite buffer diagnostics removed) */
+    /* (Old diagnostics removed) */
     if (0) {
         const uint16_t *vr = video_get_vram_ptr();
         int scb3_nonzero = 0;
