@@ -244,11 +244,37 @@ bool neogeo_frame_yield(void) {
 
     s_frame_count++;
 
-    /* Force cartridge fix tiles every frame (game may reset to BIOS) */
-    video_set_fix_source(false);
+    /* Force cartridge fix tiles (the game's S ROM, not BIOS SFIX) */
+    if (s_frame_count == 1) {
+        video_set_fix_source(false);  /* Use cart S ROM */
+    }
 
-    /* (Old diagnostics removed) */
-    if (0) {
+    /* After 120 frames (~2 sec), simulate a start button press by
+     * setting $10041A = 1. This triggers the title animation to exit
+     * and advance to the racing demo. Must be set DURING the frame
+     * (after USER clears it) for the gameplay dispatcher to see it. */
+    /* Check sprite object count and buffer data */
+    if (s_frame_count % 60 == 30) {
+        uint16_t spr_obj_count = bus_read16(0x1020A0);
+        uint16_t spr_list_count = bus_read16(0x1020A2);
+        uint16_t spr_upload = bus_read16(0x102224);
+        uint16_t vram_swap = bus_read16(0x102532);
+        /* Check if upload buffers have data */
+        uint16_t shrink0 = bus_read16(0x102230);
+        uint16_t ypos0 = bus_read16(0x102430);
+        uint16_t xpos0 = bus_read16(0x102330);
+        /* Check sprite attribute table */
+        uint16_t attr0_flag = bus_read16(0x101B20);
+        uint16_t attr0_ptr = bus_read16(0x101B22);
+        if (spr_list_count > 0 || spr_obj_count > 0 || attr0_flag > 0) {
+            printf("[spr] obj=%d lst=%d upl=%d swp=%d sh=$%04X y=$%04X x=$%04X attr=(%d,$%04X)\n",
+                   spr_obj_count, spr_list_count, spr_upload, vram_swap,
+                   shrink0, ypos0, xpos0, attr0_flag, attr0_ptr);
+        }
+    }
+
+    /* Check SCB3 more carefully */
+    if (s_frame_count % 60 == 30) {
         const uint16_t *vr = video_get_vram_ptr();
         int scb3_nonzero = 0;
         for (int i = 0; i < 381; i++) {
@@ -307,8 +333,8 @@ bool neogeo_frame_yield(void) {
                buf_scb3_0, buf_scb3_1, wr_scb3_0, wr_scb3_1);
     }
 
-    /* Screenshot capture (disabled) */
-    if (0 && s_frame_count == 300) {
+    /* Save a screenshot at frame 300 (~5 seconds in) */
+    if (s_frame_count == 300) {
         FILE *bmp = fopen("screenshot.bmp", "wb");
         if (bmp) {
             /* BMP header for 320x224 32-bit */
@@ -331,16 +357,95 @@ bool neogeo_frame_yield(void) {
         }
     }
 
-    /* Compact frame diagnostic */
+    /* Diagnostic: log state every 60 frames (~1 second) */
     if (s_frame_count % 60 == 1) {
         uint8_t game_state = bus_read8(0x10FDAE);
         uint16_t sub_state = bus_read16(0x100426);
+        uint8_t vbl_flag = bus_read8(0x10FD80);
+        uint16_t frame_ready = bus_read16(0x100424);
+
+        /* Check if any sprites have data */
         const uint16_t *vram = video_get_vram_ptr();
         int active_sprites = 0;
-        for (int i = 0; i < 381; i++)
-            if ((vram[0x8200 + i] & 0x3F) != 0) active_sprites++;
-        printf("[frame %d] st=%d sub=%d spr=%d\n",
-               s_frame_count, game_state, sub_state, active_sprites);
+        for (int i = 0; i < 381; i++) {
+            uint16_t scb3 = vram[0x8200 + i];
+            if ((scb3 & 0x3F) != 0) active_sprites++;
+        }
+
+        /* Check palette - sample a few entries */
+        uint16_t pal0_c1 = palette_read(1);
+        uint16_t backdrop = palette_read(255 * 16 + 15);
+
+        /* Also check VRAM for any non-zero data */
+        int vram_nonzero = 0;
+        for (int i = 0; i < 0x4400; i++) {
+            if (vram[i] != 0) { vram_nonzero++; break; }
+        }
+
+        /* Check fix layer (VRAM $7000 to $7500, word-addressed) */
+        int fix_nonzero = 0;
+        int fix_text = 0;  /* Non-space entries */
+        uint16_t fix_sample = 0;
+        for (int i = 0x7000; i < 0x7500; i++) {
+            if (vram[i] != 0) {
+                fix_nonzero++;
+                if (vram[i] != 0x0020) {
+                    fix_text++;
+                    if (fix_sample == 0) fix_sample = vram[i];
+                }
+            }
+        }
+
+        /* Check palette RAM for any non-zero colors */
+        int pal_nonzero = 0;
+        for (int i = 0; i < 256*16; i++) {
+            if (palette_read(i) != 0) { pal_nonzero++; break; }
+        }
+
+        /* Animation state */
+        uint32_t anim_ptr = bus_read32(0x100472);
+        uint16_t anim_sub = bus_read16(0x10048A);
+        uint16_t scroll_pos = bus_read16(0x10047C);
+        uint16_t flag_41A = bus_read16(0x10041A);
+
+        uint32_t vram_read_ptr = bus_read32(0x1025D2);
+        uint32_t vram_write_ptr = bus_read32(0x1025D6);
+        uint16_t vram_swap = bus_read16(0x102532);
+        uint16_t spr_flag = bus_read16(0x102224);
+
+        /* Count total non-zero palette entries */
+        int total_pal = 0;
+        for (int i = 0; i < 256*16; i++) {
+            if (palette_read(i) != 0) total_pal++;
+        }
+
+        /* Sample some actual palette colors */
+        uint16_t pal_sample[4] = {
+            palette_read(0*16 + 1),   /* Pal 0 color 1 */
+            palette_read(1*16 + 1),   /* Pal 1 color 1 */
+            palette_read(16*16 + 1),  /* Pal 16 color 1 */
+            palette_read(255*16+15),  /* Last color (backdrop) */
+        };
+
+        /* Find first palette with non-zero data */
+        int first_pal = -1;
+        uint16_t first_color = 0;
+        for (int p = 0; p < 256 && first_pal < 0; p++) {
+            for (int c = 1; c < 16; c++) {
+                uint16_t v = palette_read(p * 16 + c);
+                if (v != 0) { first_pal = p; first_color = v; break; }
+            }
+        }
+
+        /* Check palette 9 specifically (used by fix layer text) */
+        uint16_t pal9_c1 = palette_read(9 * 16 + 1);
+        printf("[frame %d] st=%d sub=%d spr=%d pal=%d fix=%d txt=%d(s=$%04X) p9c1=$%04X\n",
+               s_frame_count, game_state, sub_state,
+               active_sprites, total_pal, fix_nonzero, fix_text, fix_sample, pal9_c1);
+        if (0) /* suppress original */
+        printf("[frame %d] state=%d sub=%d vbl=$%02X ready=%d sprites=%d pal0c1=$%04X backdrop=$%04X\n",
+               s_frame_count, game_state, sub_state, vbl_flag, frame_ready,
+               active_sprites, pal0_c1, backdrop);
     }
 
     /* Poll input */
@@ -359,16 +464,32 @@ void neogeo_begin_frame(void) {
 }
 
 void neogeo_trigger_vblank(void) {
-    /* Sprite count logging */
+    /* Dump active sprite details once */
     {
-        const uint16_t *vr = video_get_vram_ptr();
-        static int s_last_count = -1;
-        int active = 0;
-        for (int i = 0; i < 381; i++)
-            if ((vr[0x8200 + i] & 0x3F) != 0) active++;
-        if (active != s_last_count) {
-            printf("[sprites] %d active\n", active);
-            s_last_count = active;
+        static int s_dump = 0;
+        if (!s_dump && s_frame_count > 250) {
+            const uint16_t *vr = video_get_vram_ptr();
+            int active = 0;
+            for (int i = 0; i < 381; i++)
+                if ((vr[0x8200 + i] & 0x3F) != 0) active++;
+            if (active > 0) {
+                s_dump = 1;
+                printf("[SPRITES] %d active:\n", active);
+                for (int spr = 0; spr < 381; spr++) {
+                    uint16_t scb3 = vr[0x8200 + spr];
+                    if ((scb3 & 0x3F) == 0) continue;
+                    uint16_t scb4 = vr[0x8400 + spr];
+                    uint16_t scb2 = vr[0x8000 + spr];
+                    uint16_t t0 = vr[spr*64], t1 = vr[spr*64+1];
+                    int yr = (scb3>>7)&0x1FF, h = scb3&0x3F;
+                    int sy = (496-yr)&0x1FF; if(sy>=256) sy-=512;
+                    int x = (scb4>>7)&0x1FF; if(x>320) x-=512;
+                    uint32_t tn = (uint32_t)t0 | (((uint32_t)(t1>>12)&0xF)<<16);
+                    printf("  #%d: tile=$%05X pal=%d pos=(%d,%d) h=%d sh=$%04X\n",
+                           spr, tn, t1&0xFF, x, sy, h, scb2);
+                }
+                fflush(stdout);
+            }
         }
     }
 
@@ -383,21 +504,45 @@ void neogeo_trigger_vblank(void) {
         }
     }
 
-    /* (Palette dump removed — use frame trace for diagnostics) */
+    /* Dump which palettes have data (once) */
+    {
+        static int s_pal_dump = 0;
+        if (!s_pal_dump && s_frame_count > 200) {
+            s_pal_dump = 1;
+            printf("[PAL DUMP] Palettes with non-zero data:\n");
+            for (int p = 0; p < 256; p++) {
+                int nz = 0;
+                for (int c = 1; c < 16; c++) {
+                    if (palette_read(p * 16 + c) != 0) nz++;
+                }
+                if (nz > 0) {
+                    printf("  pal %3d: %2d colors  c1=$%04X c2=$%04X c15=$%04X\n",
+                           p, nz,
+                           palette_read(p*16+1),
+                           palette_read(p*16+2),
+                           palette_read(p*16+15));
+                }
+            }
+            fflush(stdout);
+        }
+    }
 
-    /* Palette preservation is now handled in the $01229E override.
-     * Fallback: if a sprite tile still has pal=0, use palette 66. */
+    /* Fix sprite palettes: force pal=2 on any active sprite with pal=0.
+     * The game's tilemap write functions don't set the palette field
+     * in the SCB1 attribute word. Palette 2 has visible colors. */
     {
         uint16_t *vw = (uint16_t *)video_get_vram_ptr();
         for (int spr = 0; spr < 381; spr++) {
             uint16_t scb3 = vw[0x8200 + spr];
-            if ((scb3 & 0x3F) == 0) continue;
+            if ((scb3 & 0x3F) == 0) continue;  /* No height = invisible */
+            /* Check each tile row's attribute word */
             int height = scb3 & 0x3F;
             if (height > 32) height = 32;
             for (int t = 0; t < height; t++) {
                 uint16_t tile_lo = vw[spr * 64 + t * 2];
                 uint16_t tile_hi = vw[spr * 64 + t * 2 + 1];
                 if (tile_lo != 0 && (tile_hi & 0xFF) == 0) {
+                    /* Use palette 66 (varied game colors) for visibility */
                     vw[spr * 64 + t * 2 + 1] = (tile_hi & 0xFF00) | 66;
                 }
             }
