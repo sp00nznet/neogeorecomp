@@ -493,17 +493,43 @@ void neogeo_trigger_vblank(void) {
         }
     }
 
-    /* HACK: Force visible palette for sprites with tile data but pal=0 */
+    /* Fix sprite palettes: the game writes SCB1 tile data without the
+     * palette field (the $0133A0 overwrite issue). Look up the palette
+     * from the sprite object's tile base (offset +2) and apply it to
+     * the SCB1 attribute word. */
     {
-        uint16_t *vw = (uint16_t *)video_get_vram_ptr(); /* cast away const for hack */
-        for (int spr = 0; spr < 381; spr++) {
-            uint16_t scb3 = vw[0x8200 + spr];
-            if ((scb3 & 0x3F) == 0) continue;
-            uint16_t tile_lo = vw[spr * 64];
-            uint16_t tile_hi = vw[spr * 64 + 1];
-            if (tile_lo != 0 && (tile_hi & 0xFF) == 0) {
-                /* Has tile but no palette — force palette 2 */
-                vw[spr * 64 + 1] = (tile_hi & 0xFF00) | 0x02;
+        uint16_t *vw = (uint16_t *)video_get_vram_ptr();
+        /* Read sorted sprite list from $1020A2/$1020A4 */
+        uint16_t spr_count = bus_read16(0x1020A2);
+        uint32_t list_ptr = 0x1020A4;
+        for (int i = 0; i < spr_count && i < 64; i++) {
+            uint16_t priority = bus_read16(list_ptr);
+            uint32_t obj_ptr = bus_read32(list_ptr + 2);
+            list_ptr += 6;
+
+            if (obj_ptr == 0 || obj_ptr < 0x100000) continue;
+
+            /* Read tile base from sprite object offset +2 */
+            uint16_t tile_base = bus_read16(obj_ptr + 2);
+            uint8_t palette = (tile_base >> 8) & 0xFF;
+            if (palette == 0) palette = 2;  /* Fallback */
+
+            /* Find which VRAM sprite slot this object maps to */
+            /* The sorted list maps to sprite slots 32+ */
+            int spr_slot = 32 + i;
+            if (spr_slot >= 381) break;
+
+            /* Read the object's height from offset +8 */
+            uint16_t obj_height = bus_read16(obj_ptr + 8);
+            int tile_count = obj_height >> 4;  /* Height in 16px tiles */
+            if (tile_count > 32) tile_count = 32;
+
+            /* Apply palette to all tile entries for this sprite */
+            for (int t = 0; t < tile_count; t++) {
+                uint16_t tile_hi = vw[spr_slot * 64 + t * 2 + 1];
+                if ((tile_hi & 0xFF) == 0) {
+                    vw[spr_slot * 64 + t * 2 + 1] = (tile_hi & 0xFF00) | palette;
+                }
             }
         }
     }
