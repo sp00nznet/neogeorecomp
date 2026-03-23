@@ -504,6 +504,29 @@ void neogeo_trigger_vblank(void) {
         }
     }
 
+    /* Dump which palettes have data (once) */
+    {
+        static int s_pal_dump = 0;
+        if (!s_pal_dump && s_frame_count > 200) {
+            s_pal_dump = 1;
+            printf("[PAL DUMP] Palettes with non-zero data:\n");
+            for (int p = 0; p < 256; p++) {
+                int nz = 0;
+                for (int c = 1; c < 16; c++) {
+                    if (palette_read(p * 16 + c) != 0) nz++;
+                }
+                if (nz > 0) {
+                    printf("  pal %3d: %2d colors  c1=$%04X c2=$%04X c15=$%04X\n",
+                           p, nz,
+                           palette_read(p*16+1),
+                           palette_read(p*16+2),
+                           palette_read(p*16+15));
+                }
+            }
+            fflush(stdout);
+        }
+    }
+
     /* Fix sprite palettes: force pal=2 on any active sprite with pal=0.
      * The game's tilemap write functions don't set the palette field
      * in the SCB1 attribute word. Palette 2 has visible colors. */
@@ -519,7 +542,8 @@ void neogeo_trigger_vblank(void) {
                 uint16_t tile_lo = vw[spr * 64 + t * 2];
                 uint16_t tile_hi = vw[spr * 64 + t * 2 + 1];
                 if (tile_lo != 0 && (tile_hi & 0xFF) == 0) {
-                    vw[spr * 64 + t * 2 + 1] = (tile_hi & 0xFF00) | 0x02;
+                    /* Use palette 66 (varied game colors) for visibility */
+                    vw[spr * 64 + t * 2 + 1] = (tile_hi & 0xFF00) | 66;
                 }
             }
         }
