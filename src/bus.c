@@ -384,6 +384,11 @@ void bus_write8(uint32_t addr, uint8_t val) {
 
     if (addr < 0x100000) return;  /* P ROM is read-only */
     if (addr < 0x200000) {
+        /* Protect BIOS-owned game state byte at $10FDAE.
+         * On real hardware the BIOS manages this — game block-copy
+         * routines ($011B96 etc.) can inadvertently overwrite it.
+         * Drop game writes; only bus_bios_write8() may modify it. */
+        if (addr == 0x10FDAE || addr == 0x10FDAF) return;
         s_wram[addr & 0xFFFF] = val;
         return;
     }
@@ -431,6 +436,8 @@ void bus_write16(uint32_t addr, uint16_t val) {
     if (addr < 0x100000) return;  /* P ROM is read-only */
     if (addr < 0x200000) {
         s_reads_without_write = 0;
+        /* Protect BIOS-owned $10FDAE/$10FDAF from game writes */
+        if (addr == 0x10FDAE) return;
         /* Debug: trace writes to sprite attribute flag ($101B20 + n*$16) */
         if (addr == 0x101B20 && val != 0) {
             fprintf(stderr, "[SPR-FLAG] $%06X = $%04X !!\n", addr, val);
@@ -479,6 +486,14 @@ void bus_write16(uint32_t addr, uint16_t val) {
 void bus_write32(uint32_t addr, uint32_t val) {
     bus_write16(addr, (uint16_t)(val >> 16));
     bus_write16(addr + 2, (uint16_t)val);
+}
+
+void bus_bios_write8(uint32_t addr, uint8_t val) {
+    /* Bypasses protection — for BIOS stubs only */
+    addr &= 0xFFFFFF;
+    if (addr >= 0x100000 && addr < 0x200000) {
+        s_wram[addr & 0xFFFF] = val;
+    }
 }
 
 /* ----- Fast Work RAM Access ----- */

@@ -58,8 +58,9 @@ void io_set_button(int player, uint8_t button, bool pressed);
 #define IO_BTN_C       0x40
 #define IO_BTN_D       0x80
 
-#define IO_BTN_START   0x01
-#define IO_BTN_SELECT  0x02
+#define IO_BTN_SELECT  0x01
+/* STATUS_B: bit 0 = Select, bit 1 = Start (active low) */
+#define IO_BTN_START   0x02
 
 /* Coin/service */
 void io_insert_coin(int slot);   /* slot: 0-3 */

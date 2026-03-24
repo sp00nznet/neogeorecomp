@@ -78,6 +78,7 @@ void func_table_register(uint32_t addr, neogeo_func_t func) {
 
 static uint32_t s_call_count = 0;
 static uint32_t s_miss_count = 0;
+uint32_t g_last_func_addr = 0;  /* exported for watchpoints */
 
 void func_table_call(uint32_t addr) {
     neogeo_func_t func = func_table_lookup(addr);
@@ -103,11 +104,14 @@ void func_table_call(uint32_t addr) {
 
     if (func) {
         debug_trace_call(addr, NULL);
+        g_last_func_addr = addr;
         func();
     } else {
         s_miss_count++;
         if (s_miss_count <= 20) {
-            fprintf(stderr, "[func_table] WARNING: No function at $%06X (call #%u)\n", addr, s_call_count);
+            fprintf(stderr, "[func_table] WARNING: No function at $%08X (call #%u) state=$%02X sub=$%04X\n",
+                    addr, s_call_count,
+                    bus_read8(0x10FDAE), bus_read16(0x100426));
             fflush(stderr);
         }
     }

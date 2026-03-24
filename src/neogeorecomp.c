@@ -126,7 +126,7 @@ void neogeo_run(void) {
     bus_write8(0x10FD80, 0x00);  /* Game VBlank not active yet */
     bus_write8(0x10FD82, 0x00);  /* System type: standard */
     bus_write8(0x10FD83, 0x00);  /* Region: Japan */
-    bus_write8(0x10FDAE, 0x00);  /* Game state: 0 (init) */
+    bus_bios_write8(0x10FDAE, 0x00);  /* Game state: 0 (init) */
 
     /* Find the game's key entry points */
     neogeo_func_t user_func = func_table_lookup(0x00068C);    /* USER routine */
@@ -191,7 +191,7 @@ void neogeo_run(void) {
         printf("[neogeorecomp] Outer loop: state=%d, firing VBlank + USER\n", bus_read8(0x10FDAE));
         fflush(stdout);
 
-        /* Fire VBlank + render */
+        /* Fire VBlank + render ($10FDAE protected at bus layer) */
         neogeo_begin_frame();
         if (vblank_func) vblank_func();
         neogeo_trigger_vblank();
@@ -235,6 +235,8 @@ bool neogeo_frame_yield(void) {
     /* Fire the VBlank handler — this uploads VRAM/palette/sprites
      * and sets the frame-ready flag ($100424 = 1) */
     if (s_vblank_func) {
+        /* $10FDAE/$10FDAF are protected at the bus layer — game
+         * block-copy routines can't overwrite BIOS state. */
         s_vblank_func();
     }
 
@@ -253,8 +255,8 @@ bool neogeo_frame_yield(void) {
      * setting $10041A = 1. This triggers the title animation to exit
      * and advance to the racing demo. Must be set DURING the frame
      * (after USER clears it) for the gameplay dispatcher to see it. */
-    /* Check sprite object count and buffer data */
-    if (s_frame_count % 60 == 30) {
+    /* Check sprite object count and buffer data (reduced frequency) */
+    if (0 && s_frame_count % 60 == 30) {
         uint16_t spr_obj_count = bus_read16(0x1020A0);
         uint16_t spr_list_count = bus_read16(0x1020A2);
         uint16_t spr_upload = bus_read16(0x102224);
@@ -273,8 +275,8 @@ bool neogeo_frame_yield(void) {
         }
     }
 
-    /* Check SCB3 more carefully */
-    if (s_frame_count % 60 == 30) {
+    /* Check SCB3 (disabled — too noisy) */
+    if (0 && s_frame_count % 60 == 30) {
         const uint16_t *vr = video_get_vram_ptr();
         int scb3_nonzero = 0;
         for (int i = 0; i < 381; i++) {
@@ -333,8 +335,8 @@ bool neogeo_frame_yield(void) {
                buf_scb3_0, buf_scb3_1, wr_scb3_0, wr_scb3_1);
     }
 
-    /* Save a screenshot at frame 300 (~5 seconds in) */
-    if (s_frame_count == 300) {
+    /* Screenshot (disabled) */
+    if (0 && s_frame_count == 300) {
         FILE *bmp = fopen("screenshot.bmp", "wb");
         if (bmp) {
             /* BMP header for 320x224 32-bit */
@@ -464,10 +466,10 @@ void neogeo_begin_frame(void) {
 }
 
 void neogeo_trigger_vblank(void) {
-    /* Dump active sprite details once */
+    /* Dump active sprite details (disabled) */
     {
         static int s_dump = 0;
-        if (!s_dump && s_frame_count > 250) {
+        if (0 && !s_dump && s_frame_count > 250) {
             const uint16_t *vr = video_get_vram_ptr();
             int active = 0;
             for (int i = 0; i < 381; i++)
@@ -504,10 +506,10 @@ void neogeo_trigger_vblank(void) {
         }
     }
 
-    /* Dump which palettes have data (once) */
+    /* Dump palettes (disabled) */
     {
         static int s_pal_dump = 0;
-        if (!s_pal_dump && s_frame_count > 200) {
+        if (0 && !s_pal_dump && s_frame_count > 200) {
             s_pal_dump = 1;
             printf("[PAL DUMP] Palettes with non-zero data:\n");
             for (int p = 0; p < 256; p++) {

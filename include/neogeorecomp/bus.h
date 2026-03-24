@@ -72,6 +72,9 @@ void bus_write8(uint32_t addr, uint8_t val);
 void bus_write16(uint32_t addr, uint16_t val);
 void bus_write32(uint32_t addr, uint32_t val);
 
+/* BIOS-privileged write — bypasses protection on BIOS-owned addresses */
+void bus_bios_write8(uint32_t addr, uint8_t val);
+
 /* ----- Fast Work RAM Access (offset into $100000 base) ----- */
 
 /*
