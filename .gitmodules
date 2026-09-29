@@ -1,0 +1,6 @@
+[submodule "ext/musashi"]
+	path = ext/musashi
+	url = https://github.com/kstenerud/Musashi.git
+[submodule "ext/z80"]
+	path = ext/z80
+	url = https://github.com/superzazu/z80.git
