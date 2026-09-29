@@ -1,135 +1,91 @@
 /*
- * bus.h — Neo Geo memory bus and address space routing.
+ * bus.h — the 68000 address space of an MVS/AES board.
  *
- * The 68000 has a 24-bit address bus (16 MB address space). Every memory
- * access from recompiled code goes through this bus layer, which routes
- * reads and writes to the appropriate hardware subsystem:
+ * Reads and writes go through a 256-entry page table of 64 KB pages.
+ * ROM, work RAM and backup RAM resolve to a host pointer and are accessed
+ * inline; everything with side effects (I/O, LSPC, palette, bank switch)
+ * leaves the page NULL and takes the slow path in bus.c.
  *
- *   $000000-$0FFFFF  P ROM bank 1 (fixed, vectors + main code)
- *   $100000-$10FFFF  Work RAM (64 KB)
- *   $200000-$2FFFFF  P ROM bank 2 (bankswitchable for ROMs > 2 MB)
- *   $300000-$3FFFFF  I/O registers (input, video, system control)
- *   $400000-$401FFF  Palette RAM (8 KB, dual-banked)
- *   $800000-$BFFFFF  Memory card
- *   $C00000-$C1FFFF  System ROM / BIOS (128 KB)
- *   $D00000-$D0FFFF  Backup RAM (MVS only, battery-backed SRAM)
- *
- * The bus handles big-endian byte ordering (the 68000 is big-endian,
- * x86 is little-endian). All read/write functions perform the necessary
- * byte swapping transparently.
- *
- * For performance, Work RAM has fast-path accessors (bus_wram_read/write)
- * that skip the address decoder. Use these when you know the access is
- * to Work RAM (e.g., recompiled code accessing known RAM variables).
+ * All memory is held big-endian, exactly as the 68000 sees it.
  */
-
 #ifndef NEOGEORECOMP_BUS_H
 #define NEOGEORECOMP_BUS_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* ----- Initialization ----- */
+extern uint8_t *ng_rmap[256];
+extern uint8_t *ng_wmap[256];
 
-/*
- * Initialize the bus subsystem.
- *
- * Allocates Work RAM, Palette RAM, and Backup RAM. Must be called
- * after ROM loading but before any bus access.
- */
-int bus_init(void);
+uint8_t  ng_r8_slow(uint32_t a);
+uint16_t ng_r16_slow(uint32_t a);
+void     ng_w8_slow(uint32_t a, uint8_t v);
+void     ng_w16_slow(uint32_t a, uint16_t v);
 
-/* Free all bus-allocated memory. */
-void bus_shutdown(void);
+static inline uint8_t ng_r8(uint32_t a) {
+    a &= 0xFFFFFF;
+    uint8_t *p = ng_rmap[a >> 16];
+    return p ? p[a & 0xFFFF] : ng_r8_slow(a);
+}
+static inline uint16_t ng_r16(uint32_t a) {
+    a &= 0xFFFFFE;
+    uint8_t *p = ng_rmap[a >> 16];
+    if (p) { p += a & 0xFFFF; return (uint16_t)((p[0] << 8) | p[1]); }
+    return ng_r16_slow(a);
+}
+static inline uint32_t ng_r32(uint32_t a) {
+    return ((uint32_t)ng_r16(a) << 16) | ng_r16(a + 2);
+}
+static inline void ng_w8(uint32_t a, uint8_t v) {
+    a &= 0xFFFFFF;
+    uint8_t *p = ng_wmap[a >> 16];
+    if (p) p[a & 0xFFFF] = v; else ng_w8_slow(a, v);
+}
+static inline void ng_w16(uint32_t a, uint16_t v) {
+    a &= 0xFFFFFE;
+    uint8_t *p = ng_wmap[a >> 16];
+    if (p) { p += a & 0xFFFF; p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
+    else ng_w16_slow(a, v);
+}
+static inline void ng_w32(uint32_t a, uint32_t v) {
+    ng_w16(a, (uint16_t)(v >> 16));
+    ng_w16(a + 2, (uint16_t)v);
+}
 
-/* ----- ROM Loading ----- */
+/* Stack helpers used by recompiled JSR/RTS/exception code. */
+static inline void ng_push16(uint16_t v);
+static inline void ng_push32(uint32_t v);
+static inline uint16_t ng_pop16(void);
+static inline uint32_t ng_pop32(void);
 
-/*
- * Load the P ROM (68k program code) from file(s).
- *
- * For games with a single P1 ROM (<= 1 MB), only p1_path is needed.
- * For games with P1 + P2 ROMs, both paths are required.
- *
- * The bus handles the Neo Geo's reversed mapping for 2 MB P ROMs
- * (second MiB at $000000, first at $200000) internally.
- */
-int bus_load_prom(const char *p1_path, const char *p2_path);
+/* ---- board setup (called by the loader) ---- */
+typedef struct {
+    uint8_t *prom;          /* P ROM, 68k byte order; fixed bank first */
+    size_t   prom_size;
+    uint8_t *bios;          /* 128 KB system ROM, 68k byte order */
+    int      mvs;           /* 1 = MVS (backup RAM, coin slots), 0 = AES */
+} ng_board_t;
 
-/* Load the system BIOS ROM (128 KB, maps to $C00000). */
-int bus_load_bios(const char *bios_path);
-
-/* ----- General Bus Access (big-endian, address-decoded) ----- */
-
-uint8_t  bus_read8(uint32_t addr);
-uint16_t bus_read16(uint32_t addr);
-uint32_t bus_read32(uint32_t addr);
-
-void bus_write8(uint32_t addr, uint8_t val);
-void bus_write16(uint32_t addr, uint16_t val);
-void bus_write32(uint32_t addr, uint32_t val);
-
-/* BIOS-privileged write — bypasses protection on BIOS-owned addresses */
-void bus_bios_write8(uint32_t addr, uint8_t val);
-
-/* ----- Fast Work RAM Access (offset into $100000 base) ----- */
-
-/*
- * These skip the address decoder for performance. The offset is
- * relative to the Work RAM base ($100000), not the full 68k address.
- *
- * Example: bus_wram_read16(0x0000) reads $100000 (first word of Work RAM).
- */
-uint8_t  bus_wram_read8(uint32_t offset);
-uint16_t bus_wram_read16(uint32_t offset);
-uint32_t bus_wram_read32(uint32_t offset);
-
-void bus_wram_write8(uint32_t offset, uint8_t val);
-void bus_wram_write16(uint32_t offset, uint16_t val);
-void bus_wram_write32(uint32_t offset, uint32_t val);
-
-/* ----- P ROM Banking ----- */
-
-/*
- * Set the P ROM bank for the $200000-$2FFFFF window.
- *
- * For games <= 2 MB, this is never called (the mapping is fixed).
- * For larger games, the game code writes to $200000-$2FFFFF odd addresses
- * to select which 1 MB slice of the P2 ROM appears in that window.
- *
- * The bus layer intercepts writes to $2xxxxx and calls this internally.
- */
-void bus_set_prom_bank(uint8_t bank);
-
-/* Get the currently active P ROM bank number. */
-uint8_t bus_get_prom_bank(void);
-
-/* ----- Vector Table Swap ----- */
-
-/*
- * The Neo Geo can swap between BIOS vectors and cartridge vectors
- * at $000000-$000007 (SSP and PC reset vectors) and the full
- * exception vector table. This is controlled by writes to:
- *   $3A0003 (REG_SWPBIOS) — use BIOS vectors
- *   $3A0013 (REG_SWPROM)  — use cartridge vectors
- */
-void bus_set_vector_source(bool use_bios);
-bool bus_get_vector_source(void);
-
-/* ----- Direct ROM Pointer (for tools/analysis) ----- */
-
-/* Get a pointer to the raw P ROM data. */
-const uint8_t *bus_get_prom_ptr(void);
-uint32_t bus_get_prom_size(void);
-
-/* Get a pointer to the raw Work RAM. */
-uint8_t *bus_get_wram_ptr(void);
+void bus_init(const ng_board_t *board);
+void bus_reset(void);
+uint8_t *bus_wram(void);            /* 64 KB work RAM */
+uint8_t *bus_backup_ram(void);      /* 64 KB MVS backup RAM */
+void bus_select_bios_vectors(int bios);
+void bus_set_backup_lock(int locked);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* NEOGEORECOMP_BUS_H */
+#include "cpu.h"
+
+static inline void ng_push16(uint16_t v) { CPU.a[7] -= 2; ng_w16(CPU.a[7], v); }
+static inline void ng_push32(uint32_t v) { CPU.a[7] -= 4; ng_w32(CPU.a[7], v); }
+static inline uint16_t ng_pop16(void) { uint16_t v = ng_r16(CPU.a[7]); CPU.a[7] += 2; return v; }
+static inline uint32_t ng_pop32(void) { uint32_t v = ng_r32(CPU.a[7]); CPU.a[7] += 4; return v; }
+
+#endif

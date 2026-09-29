@@ -1,173 +1,151 @@
 /*
- * io.c — Neo Geo input and system I/O implementation.
+ * io.c — the $300000-$3BFFFF I/O block: controllers, DIP switches, status
+ * ports, the system latch, and the MVS calendar chip (uPD4990A).
  *
- * Manages controller state, DIP switches, system mode (MVS/AES),
- * and the system control register bank at $3A00xx.
+ *   $300000 P1   $300001 DIPs (r) / watchdog (w)   $300081 test/slot type
+ *   $320000 Z80 reply (r) / command (w)            $320001 coins + RTC
+ *   $340000 P2   $380000 start/select, card, MVS/AES
+ *   $380001-$3800E1 (w, odd) output latches; $380051 = RTC data/clock/strobe
+ *   $3A0001-$3A001F (w, odd) system latch: A1-A3 pick the bit, A4 is its value
+ *
+ * All button bits are active-low on the bus; ng_input_t is active-high.
  */
-
-#include <neogeorecomp/io.h>
-#include <neogeorecomp/video.h>
-#include <neogeorecomp/palette.h>
+#include "ng_internal.h"
 #include <neogeorecomp/bus.h>
-#include <neogeorecomp/timer.h>
 #include <string.h>
-#include <stdio.h>
+#include <time.h>
 
-/* ----- Internal State ----- */
+static ng_input_t s_in;
+static int s_mvs;
 
-/* Controller states (active low: 0xFF = nothing pressed) */
-static uint8_t s_p1_controls = 0xFF;
-static uint8_t s_p2_controls = 0xFF;
-static uint8_t s_start_select = 0xFF;  /* Start/Select for both players */
+void io_set_inputs(const ng_input_t *in) { s_in = *in; }
 
-static uint8_t s_dipsw = 0xFF;        /* DIP switch state */
-static bool s_mvs_mode = true;
-static int s_region = 0;              /* 0=Japan, 1=USA, 2=Europe */
-static uint8_t s_coin_counters = 0xFF; /* Coin inputs (active low) */
+/* ---- uPD4990A calendar ----
+ * Serial mode: each rising CLK edge shifts DATA IN into the 4-bit command
+ * register and, in shift mode, through the 48-bit time register (LSB out
+ * first). A rising STB executes the command. TP is a square wave the BIOS
+ * polls; its frequency is set by commands 4-B. */
+static struct {
+    int      din, clk, stb;
+    uint8_t  cmd_shift, mode;
+    uint64_t reg;            /* sec, min, hour, day (BCD), wday, month, year (BCD) */
+    int64_t  tp_half;        /* half-period of TP in 68k clocks */
+} s_rtc;
 
-/* ----- Initialization ----- */
+static uint8_t bcd(int v) { return (uint8_t)(((v / 10) << 4) | (v % 10)); }
 
-int io_init(bool mvs_mode, int region) {
-    s_p1_controls = 0xFF;
-    s_p2_controls = 0xFF;
-    s_start_select = 0xFF;
-    s_dipsw = 0xFF;
-    s_mvs_mode = mvs_mode;
-    s_region = region;
-    s_coin_counters = 0xFF;
-    printf("[io] Mode: %s, Region: %d\n", mvs_mode ? "MVS" : "AES", region);
-    return 0;
+static uint64_t rtc_now(void) {
+    time_t t = time(NULL);
+    struct tm tmv;
+#ifdef _WIN32
+    localtime_s(&tmv, &t);
+#else
+    localtime_r(&t, &tmv);
+#endif
+    return (uint64_t)bcd(tmv.tm_sec) | ((uint64_t)bcd(tmv.tm_min) << 8) |
+           ((uint64_t)bcd(tmv.tm_hour) << 16) | ((uint64_t)bcd(tmv.tm_mday) << 24) |
+           ((uint64_t)(tmv.tm_wday & 0xF) << 32) | ((uint64_t)((tmv.tm_mon + 1) & 0xF) << 36) |
+           ((uint64_t)bcd(tmv.tm_year % 100) << 40);
 }
 
-void io_shutdown(void) {
-    /* Nothing to free */
+static void rtc_exec(uint8_t c) {
+    static const int tp_hz[4] = {64, 256, 2048, 4096};
+    static const int tp_sec[4] = {1, 10, 30, 60};
+    s_rtc.mode = c;
+    if (c == 3) s_rtc.reg = rtc_now();
+    else if (c >= 4 && c <= 7) s_rtc.tp_half = 12000000 / tp_hz[c - 4] / 2;
+    else if (c >= 8 && c <= 0xB) s_rtc.tp_half = (int64_t)12000000 * tp_sec[c - 8] / 2;
 }
 
-/* ----- Input State ----- */
+static int rtc_tp(void) { return (int)((ng_cycles / s_rtc.tp_half) & 1); }
 
-void io_update(void) {
-    /* Called once per frame — input is polled by the platform layer
-     * and forwarded via io_set_button(). Nothing to do here yet. */
+static int rtc_data_out(void) {
+    if (s_rtc.mode == 1) return (int)(s_rtc.reg & 1);
+    return (int)((ng_cycles / 6000000) & 1);   /* 1 Hz in the other modes */
 }
 
-void io_set_button(int player, uint8_t button, bool pressed) {
-    /* High nibble flags (0x10, 0x20) = start/select */
-    if (button & 0xF0) {
-        uint8_t ss_bit = button >> 4;
-        uint8_t mask = (player == 0) ? ss_bit : (ss_bit << 2);
-        if (pressed) {
-            s_start_select &= ~mask;
-        } else {
-            s_start_select |= mask;
-        }
-        return;
+static void rtc_write(uint8_t v) {
+    int din = v & 1, clk = (v >> 1) & 1, stb = (v >> 2) & 1;
+    s_rtc.din = din;
+    if (clk && !s_rtc.clk) {
+        s_rtc.cmd_shift = (uint8_t)((s_rtc.cmd_shift >> 1) | (din << 3));
+        if (s_rtc.mode == 1)
+            s_rtc.reg = (s_rtc.reg >> 1) | ((uint64_t)din << 47);
     }
-    uint8_t *state = (player == 0) ? &s_p1_controls : &s_p2_controls;
-    if (pressed) {
-        *state &= ~button;
-    } else {
-        *state |= button;
-    }
+    if (stb && !s_rtc.stb) rtc_exec(s_rtc.cmd_shift & 0xF);
+    s_rtc.clk = clk; s_rtc.stb = stb;
 }
 
-void io_insert_coin(int slot) {
-    (void)slot;
-    /* Momentarily clear the coin bit — the game reads this on VBlank */
-    s_coin_counters &= ~(1 << slot);
+void io_reset(int mvs) {
+    s_mvs = mvs;
+    memset(&s_in, 0, sizeof(s_in));
+    memset(&s_rtc, 0, sizeof(s_rtc));
+    s_rtc.tp_half = 12000000 / 64 / 2;
+    s_rtc.reg = rtc_now();
 }
 
-void io_press_service(void) {
-    /* Service button — active low, momentary */
+/* ---- reads ---- */
+
+static uint8_t status_a(void) {
+    uint8_t v = 0x3F;
+    if (s_in.coin1) v &= (uint8_t)~0x01;
+    if (s_in.coin2) v &= (uint8_t)~0x02;
+    if (s_in.service) v &= (uint8_t)~0x04;
+    if (rtc_tp()) v |= 0x40;
+    if (rtc_data_out()) v |= 0x80;
+    return v;
 }
 
-/* ----- Register Reads ----- */
-
-uint8_t io_read_p1cnt(void) {
-    return s_p1_controls;
+static uint8_t status_b(void) {
+    uint8_t v = 0x7F;                 /* bits 4-6: no memory card */
+    if (s_in.start1) v &= (uint8_t)~0x01;
+    if (s_in.select1) v &= (uint8_t)~0x02;
+    if (s_in.start2) v &= (uint8_t)~0x04;
+    if (s_in.select2) v &= (uint8_t)~0x08;
+    if (s_mvs) v |= 0x80;
+    return v;
 }
 
-uint8_t io_read_dipsw(void) {
-    return s_dipsw;
-}
-
-uint8_t io_read_systype(void) {
-    /* Bit 7: test button (active low), Bits 5-4: slot count, Bit 0: system ID */
-    uint8_t val = 0xFF;
-    return val;
-}
-
-uint8_t io_read_status_a(void) {
-    /* Coin inputs, service button, RTC data */
-    return s_coin_counters;
-}
-
-uint8_t io_read_p2cnt(void) {
-    return s_p2_controls;
-}
-
-uint8_t io_read_status_b(void) {
-    /*
-     * Bit 7: (unused)
-     * Bit 6: 0 = AES, 1 = MVS
-     * Bit 5: Memory card write-protected
-     * Bit 4: Memory card inserted
-     * Bit 3: P2 Start
-     * Bit 2: P2 Select
-     * Bit 1: P1 Start
-     * Bit 0: P1 Select
-     */
-    uint8_t val = s_start_select & 0x0F;  /* Start/Select bits */
-    if (s_mvs_mode) val |= 0x40;          /* MVS flag */
-    val |= 0xB0;                           /* No card inserted, not write-protected */
-    return val;
-}
-
-/* ----- Register Writes ----- */
-
-void io_kick_watchdog(void) {
-    timer_kick_watchdog();
-}
-
-void io_write_sysctrl(uint32_t addr) {
-    /*
-     * System control registers at $3A00xx.
-     * These are write-only, data doesn't matter — the address bit 4
-     * carries the value (0 or 1).
-     *
-     * $3A0001/$3A0011: Shadow off/on
-     * $3A0003/$3A0013: BIOS vectors / Cart vectors
-     * $3A000B/$3A001B: BIOS fix tiles / Cart fix tiles
-     * $3A000D/$3A001D: SRAM lock / unlock
-     * $3A000F/$3A001F: Palette bank 1 / bank 0
-     */
-    bool bit4 = (addr & 0x10) != 0;
-    uint8_t reg = (uint8_t)(addr & 0x0F);
-
-    switch (reg) {
-        case 0x01:
-            video_set_shadow(bit4);
-            break;
-        case 0x03:
-            bus_set_vector_source(!bit4);  /* 0 = BIOS, 1 = cart */
-            break;
-        case 0x05:
-            /* Memory card unlock/lock — not implemented */
-            break;
-        case 0x0B:
-            video_set_fix_source(!bit4);  /* 0 = BIOS, 1 = cart */
-            break;
-        case 0x0D:
-            /* SRAM lock/unlock */
-            /* bit4 = 1 means unlock ($3A001D), bit4 = 0 means lock ($3A000D) */
-            break;
-        case 0x0F:
-            palette_set_bank(bit4 ? 0 : 1);
-            break;
-        default:
-            break;
+uint8_t io_read8(uint32_t a) {
+    switch (a & 0xFE0000) {
+    case 0x300000:
+        if (!(a & 1)) return (uint8_t)~s_in.p1;
+        if (a & 0x80) return (uint8_t)(0x3F | (s_in.test ? 0 : 0x80));   /* 1-slot board */
+        return 0xFF;                                                     /* DIPs all off */
+    case 0x320000:
+        if (!(a & 1)) return audio_reply();
+        return status_a();
+    case 0x340000:
+        return (a & 1) ? 0xFF : (uint8_t)~s_in.p2;
+    case 0x380000:
+        return (a & 1) ? 0xFF : status_b();
+    default:
+        return 0xFF;
     }
 }
 
-void io_set_dipsw(uint8_t value) {
-    s_dipsw = value;
+/* ---- writes ---- */
+
+static void system_latch(uint32_t a) {
+    int bit = (a >> 4) & 1;
+    switch ((a >> 1) & 7) {
+    case 0: break;                                   /* shadow */
+    case 1: bus_select_bios_vectors(!bit); break;    /* SWPBIOS / SWPROM */
+    case 2: case 3: case 4: break;                   /* memory card control */
+    case 5: video_set_fix_bios(!bit); audio_select_bios_rom(!bit); break;  /* BRDFIX / CRTFIX */
+    case 6: bus_set_backup_lock(!bit); break;        /* SRAMLOCK / SRAMUNLOCK */
+    case 7: pal_select_bank(bit ? 0 : 1); break;     /* PALBANK1 / PALBANK0 */
+    }
+}
+
+void io_write8(uint32_t a, uint8_t v) {
+    switch (a & 0xFE0000) {
+    case 0x300000: break;                            /* watchdog kick */
+    case 0x320000: if (!(a & 1)) audio_command(v); break;
+    case 0x380000:
+        if ((a & 0x7F) == 0x51) rtc_write(v);        /* other latches: LEDs, coin counters */
+        break;
+    case 0x3A0000: if (a & 1) system_latch(a); break;
+    default: break;
+    }
 }
