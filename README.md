@@ -7,13 +7,13 @@ The game code is not interpreted. `m68krecomp` translates it ahead of time into 
 Games live in their own repos and pull this one in as a submodule:
 
 - [**metalslug**](https://github.com/sp00nznet/metalslug): *Metal Slug* (1996), the reference game. It boots, runs attract mode and plays through Mission 1 on 100% recompiled code.
-- [**neodriftout**](https://github.com/sp00nznet/neodriftout): *Neo Drift Out*. It was brought up on the previous, title-specific runtime and is not yet ported to this one ([ROADMAP.md](ROADMAP.md)).
+- [**neodriftout**](https://github.com/sp00nznet/neodriftout): *Neo Drift Out* (1996). Ported with no toolkit changes: it boots, runs attract mode and races through Stage 1.
 
 > **No game data here.** ROMs, system ROMs and anything generated from them (the recompiled C, entry-point lists) are never committed. You supply your own dump; the recompiler runs locally and writes into your build directory.
 
 ## Status
 
-**v0.2.0-dev, alpha.** Metal Slug is playable, with no sound yet.
+**v0.2.0-dev, alpha.** Metal Slug and Neo Drift Out are playable, with no sound yet.
 
 ![Metal Slug gameplay, rendered by the recompiled C](docs/screenshots/mslug-tank.png)
 
@@ -35,7 +35,7 @@ Games live in their own repos and pull this one in as a submodule:
 | Game | Boots | In game | Native coverage | `--verify` | Sound |
 |---|---|---|---|---|---|
 | Metal Slug (`mslug`) | yes | yes, Mission 1 played through a 5-minute soak | 100% of that soak after one profile pass | 0 mismatches | no |
-| Neo Drift Out (`driftout`) | not yet ported | | | | |
+| Neo Drift Out (`neodrift`) | yes | yes, practice and Stage 1 through a 6-minute soak | 100% of that soak after one profile pass | 0 mismatches (46.67M blocks) | no |
 
 ## How it works
 
