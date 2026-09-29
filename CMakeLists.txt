@@ -79,6 +79,8 @@ target_include_directories(neogeorecomp
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(neogeorecomp PUBLIC musashi z80core)
 if(TARGET SDL2::SDL2)
+    # Visible to the game's CMakeLists too, so it can ship the DLL.
+    set_target_properties(SDL2::SDL2 PROPERTIES IMPORTED_GLOBAL TRUE)
     target_sources(neogeorecomp PRIVATE src/window_sdl.c)
     target_compile_definitions(neogeorecomp PRIVATE NG_HAVE_SDL)
     target_link_libraries(neogeorecomp PUBLIC SDL2::SDL2)
