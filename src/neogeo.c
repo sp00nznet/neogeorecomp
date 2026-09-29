@@ -11,6 +11,7 @@
  */
 #include "ng_internal.h"
 #include <neogeorecomp/bus.h>
+#include "romload.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +25,7 @@ static uint32_t s_fb[NG_SCREEN_W * NG_SCREEN_H];
 #define MAX_SHOTS 64
 typedef struct {
     const char *rom_path, *bios_path, *record, *input, *dump_misses, *bios_name;
-    int headless, interp, scale;
+    int headless, interp, verify, scale;
     long frames;
     struct { long frame; const char *path; } shots[MAX_SHOTS];
     int nshots;
@@ -42,6 +43,7 @@ static void usage(const char *prog) {
         "  --screenshot N:FILE   save frame N as PNG (repeatable)\n"
         "  --input FILE          scripted input (see docs/running.md)\n"
         "  --interp              run everything in the interpreter\n"
+        "  --verify              re-run every recompiled block in the interpreter and compare\n"
         "  --dump-misses FILE    write interpreted entry points for the recompiler\n"
         "  --scale N             window scale (default 3)\n", prog);
 }
@@ -60,6 +62,7 @@ static int parse_args(int argc, char **argv, options_t *o) {
         else if (!strcmp(a, "--frames") && next) { o->frames = atol(next); i++; }
         else if (!strcmp(a, "--input") && next) { o->input = next; i++; }
         else if (!strcmp(a, "--interp")) o->interp = 1;
+        else if (!strcmp(a, "--verify")) o->verify = 1;
         else if (!strcmp(a, "--dump-misses") && next) { o->dump_misses = next; i++; }
         else if (!strcmp(a, "--scale") && next) { o->scale = atoi(next); i++; }
         else if (!strcmp(a, "--screenshot") && next) {
@@ -73,64 +76,6 @@ static int parse_args(int argc, char **argv, options_t *o) {
     }
     if (!o->bios_path) o->bios_path = o->rom_path;
     return 0;
-}
-
-/* ---- ROM files ---- */
-
-static uint8_t *read_file(const char *dir, const char *name, size_t *size) {
-    char path[1024];
-    snprintf(path, sizeof(path), "%s/%s", dir, name);
-    FILE *f = fopen(path, "rb");
-    if (!f) { fprintf(stderr, "error: cannot open %s\n", path); return NULL; }
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *buf = (uint8_t *)malloc((size_t)n);
-    if (fread(buf, 1, (size_t)n, f) != (size_t)n) { fclose(f); free(buf); return NULL; }
-    fclose(f);
-    *size = (size_t)n;
-    return buf;
-}
-
-static void swap16(uint8_t *p, size_t n) {
-    for (size_t i = 0; i + 1 < n; i += 2) { uint8_t t = p[i]; p[i] = p[i + 1]; p[i + 1] = t; }
-}
-
-static uint8_t *load_prom(const char *dir, const ng_game_t *g) {
-    uint8_t *prom = (uint8_t *)calloc(1, g->prom_size);
-    for (int i = 0; i < NG_MAX_PARTS && g->prom[i].file; i++) {
-        const ng_rom_part_t *p = &g->prom[i];
-        size_t size;
-        uint8_t *data = read_file(dir, p->file, &size);
-        if (!data) { free(prom); return NULL; }
-        if (p->file_offset + p->length > size || p->dest_offset + p->length > g->prom_size) {
-            fprintf(stderr, "error: %s is smaller than the layout expects\n", p->file);
-            free(data); free(prom); return NULL;
-        }
-        memcpy(prom + p->dest_offset, data + p->file_offset, p->length);
-        if (p->swap) swap16(prom + p->dest_offset, p->length);
-        free(data);
-    }
-    return prom;
-}
-
-/* C ROMs come in pairs holding bitplanes 0-1 and 2-3; the renderer wants
- * them byte-interleaved (even byte from the first file). */
-static uint8_t *load_crom(const char *dir, const ng_game_t *g) {
-    uint8_t *crom = (uint8_t *)calloc(1, g->crom_size);
-    size_t at = 0;
-    for (int i = 0; i < NG_MAX_PARTS && g->crom_pairs[i][0]; i++) {
-        size_t s0, s1;
-        uint8_t *a = read_file(dir, g->crom_pairs[i][0], &s0);
-        uint8_t *b = read_file(dir, g->crom_pairs[i][1], &s1);
-        if (!a || !b || s0 != s1 || at + s0 * 2 > g->crom_size) {
-            free(a); free(b); free(crom); return NULL;
-        }
-        for (size_t k = 0; k < s0; k++) { crom[at + 2 * k] = a[k]; crom[at + 2 * k + 1] = b[k]; }
-        at += s0 * 2;
-        free(a); free(b);
-    }
-    return crom;
 }
 
 /* ---- scripted input ---- */
@@ -255,27 +200,27 @@ int ng_main(int argc, char **argv, const ng_game_t *game,
     if (o.input && load_script(o.input)) return 1;
 
     size_t sz, bios_sz, sfix_sz, sm1_sz, lo_sz, srom_sz, m1_sz;
-    uint8_t *prom = load_prom(o.rom_path, game);
-    uint8_t *bios = read_file(o.bios_path, o.bios_name, &bios_sz);
-    uint8_t *sfix = read_file(o.bios_path, "sfix.sfix", &sfix_sz);
-    uint8_t *sm1 = read_file(o.bios_path, "sm1.sm1", &sm1_sz);
-    uint8_t *lo = read_file(o.bios_path, "000-lo.lo", &lo_sz);
-    uint8_t *crom = load_crom(o.rom_path, game);
-    uint8_t *srom = read_file(o.rom_path, game->srom, &srom_sz);
-    uint8_t *m1 = read_file(o.rom_path, game->m1, &m1_sz);
+    uint8_t *prom = ng_load_prom(o.rom_path, game);
+    uint8_t *bios = ng_read_file(o.bios_path, o.bios_name, &bios_sz);
+    uint8_t *sfix = ng_read_file(o.bios_path, "sfix.sfix", &sfix_sz);
+    uint8_t *sm1 = ng_read_file(o.bios_path, "sm1.sm1", &sm1_sz);
+    uint8_t *lo = ng_read_file(o.bios_path, "000-lo.lo", &lo_sz);
+    uint8_t *crom = ng_load_crom(o.rom_path, game);
+    uint8_t *srom = ng_read_file(o.rom_path, game->srom, &srom_sz);
+    uint8_t *m1 = ng_read_file(o.rom_path, game->m1, &m1_sz);
     if (!prom || !bios || !sfix || !sm1 || !lo || !crom || !srom || !m1) {
         fprintf(stderr, "error: missing ROM files; see docs/running.md for the expected set\n");
         return 1;
     }
     if (bios_sz < 0x20000) { fprintf(stderr, "error: %s is not a 128 KB system ROM\n", o.bios_name); return 1; }
-    swap16(bios, 0x20000);
+    ng_swap16(bios, 0x20000);
     (void)sz;
 
     const uint8_t *vroms[NG_MAX_PARTS];
     size_t vsizes[NG_MAX_PARTS];
     int nv = 0;
     for (; nv < NG_MAX_PARTS && game->vrom[nv]; nv++) {
-        uint8_t *v = read_file(o.rom_path, game->vrom[nv], &vsizes[nv]);
+        uint8_t *v = ng_read_file(o.rom_path, game->vrom[nv], &vsizes[nv]);
         if (!v) return 1;
         vroms[nv] = v;
     }
@@ -287,6 +232,7 @@ int ng_main(int argc, char **argv, const ng_game_t *game,
     free(crom);
     audio_init(m1, m1_sz, sm1, vroms, vsizes, nv);
     exec_init(funcs, nfuncs, o.interp || nfuncs == 0);
+    exec_set_verify(o.verify);
     if (platform_init(game->title, o.scale, o.headless, o.record)) return 1;
 
     fprintf(stderr, "[neogeorecomp] %s: %zu recompiled entry points%s\n", game->name, nfuncs,

@@ -35,6 +35,11 @@ typedef struct {
 extern ng_cpu_t ng_cpu;
 extern int64_t  ng_cycles;      /* 68k clocks since power-on */
 extern int64_t  ng_next_event;  /* recompiled code yields once ng_cycles reaches this */
+extern uint64_t ng_icount;      /* instructions executed natively (for --verify) */
+
+/* Opens every recompiled instruction: its base cycle cost, and a count
+ * the verifier uses to replay the same number of instructions. */
+#define NG_INSN(cyc) (ng_cycles += (cyc), ng_icount++)
 
 #define CPU ng_cpu
 

@@ -82,6 +82,7 @@ void exec_reset(void);
 void exec_run(int64_t until);            /* run the 68000 until ng_cycles >= until */
 void exec_report(void);
 int  exec_dump_misses(const char *path);
+void exec_set_verify(int on);           /* check every native block against Musashi */
 void exec_irq_changed(void);            /* an IRQ line changed (tell Musashi if it is running) */
 void exec_event_changed(int64_t at);    /* an event was scheduled; end the slice early if needed */
 extern uint64_t exec_native_blocks, exec_interp_instrs;

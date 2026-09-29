@@ -62,7 +62,8 @@ add_library(neogeorecomp STATIC
     src/video.c
     src/io.c
     src/audio.c
-    src/platform.c)
+    src/platform.c
+    src/romload.c)
 target_include_directories(neogeorecomp
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -76,4 +77,19 @@ endif()
 
 if(NEOGEORECOMP_BUILD_TESTS)
     enable_testing()
+endif()
+
+# ---- m68krecomp: the recompiler, linked into each game's generator ----
+add_library(m68krecomp STATIC
+    tools/m68krecomp/decode.c
+    tools/m68krecomp/emit.c
+    tools/m68krecomp/recomp.c
+    src/romload.c)
+target_include_directories(m68krecomp
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tools/m68krecomp)
+target_link_libraries(m68krecomp PUBLIC musashi)
+if(MSVC)
+    target_compile_definitions(m68krecomp PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(m68krecomp PRIVATE /W3)
 endif()

@@ -16,7 +16,9 @@
 #define M68K_EMULATE_020           M68K_OPT_OFF
 #define M68K_EMULATE_030           M68K_OPT_OFF
 #define M68K_EMULATE_040           M68K_OPT_OFF
-#define M68K_SEPARATE_READS        M68K_OPT_OFF
+/* Instruction fetches get their own callbacks, so --verify can replay
+ * data reads from its log while code comes straight from ROM. */
+#define M68K_SEPARATE_READS        M68K_OPT_ON
 #define M68K_SIMULATE_PD_WRITES    M68K_OPT_OFF
 #define M68K_EMULATE_INT_ACK       M68K_OPT_OFF
 #define M68K_EMULATE_BKPT_ACK      M68K_OPT_OFF

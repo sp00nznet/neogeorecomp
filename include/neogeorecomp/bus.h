@@ -62,6 +62,19 @@ static inline void ng_push32(uint32_t v);
 static inline uint16_t ng_pop16(void);
 static inline uint32_t ng_pop32(void);
 
+/* ---- access log for --verify ----
+ * While logging, every access takes the slow path and every data read and
+ * write is recorded in order, so the interpreter can replay the same block
+ * against the same values (instruction fetches are not data reads). */
+typedef struct {
+    uint8_t  write, size;
+    uint32_t addr, value;
+} ng_bus_event_t;
+
+void bus_log_begin(void);
+size_t bus_log_end(const ng_bus_event_t **events);
+uint16_t bus_peek16(uint32_t a);             /* plain-memory read, no side effects, no log */
+
 /* ---- board setup (called by the loader) ---- */
 typedef struct {
     uint8_t *prom;          /* P ROM, 68k byte order; fixed bank first */
