@@ -4,7 +4,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-The runtime is rebuilt as a generic model of the MVS board. The previous runtime (v0.1.0) was shaped around Neo Drift Out with title-specific patches; nothing from it survives except the name.
+The runtime is rebuilt as a generic model of the MVS board (#1). The previous runtime (v0.1.0) was shaped around Neo Drift Out with title-specific patches; nothing from it survives except the name.
 
 ### Added
 - **m68krecomp**, the 68000 static recompiler: a full 68000 decoder; recursive-descent discovery from vectors, cartridge header entry points, static call targets, jump tables and code pointers; readable C output with address and disassembly on every line; `--entries` for runtime-found entry points; a `--raw` mode and a standalone tool for flat images.
@@ -19,6 +19,7 @@ The runtime is rebuilt as a generic model of the MVS board. The previous runtime
 - Docs: architecture, recompiler, running, conformance, porting a game, hardware notes.
 
 ### Changed
+- Neo Drift Out is ported to the generic runtime with no toolkit changes. Its old per-game overrides are deleted, and it boots, attracts and races verified.
 - Games describe only their ROM layout (`ng_game_t`) and hand the runtime their recompiled table through `ng_main()`.
 
 ### Removed
