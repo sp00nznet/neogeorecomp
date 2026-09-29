@@ -4,7 +4,14 @@ project(neogeorecomp VERSION 0.2.0 LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-option(NEOGEORECOMP_BUILD_TESTS "Build the conformance harness and unit tests" ON)
+# Tests build by default only when this is the top-level project, not when
+# a game pulls the toolkit in with add_subdirectory().
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(ng_tests_default ON)
+else()
+    set(ng_tests_default OFF)
+endif()
+option(NEOGEORECOMP_BUILD_TESTS "Build the conformance harness" ${ng_tests_default})
 
 set(NG_EXT ${CMAKE_CURRENT_SOURCE_DIR}/ext)
 if(NOT EXISTS ${NG_EXT}/musashi/m68k_in.c OR NOT EXISTS ${NG_EXT}/z80/z80.c)
@@ -42,6 +49,7 @@ if(MSVC)
     target_compile_options(musashi PRIVATE /w)
 else()
     target_compile_options(musashi PRIVATE -w)
+    target_link_libraries(musashi PUBLIC m)   # the FPU code calls sin/cos
 endif()
 
 # ---- Z80 (MIT) ----
@@ -52,7 +60,8 @@ if(MSVC)
 endif()
 
 # ---- runtime ----
-find_package(SDL2 CONFIG REQUIRED)
+# SDL2 provides the window; without it the runtime builds headless-only.
+find_package(SDL2 CONFIG QUIET)
 
 add_library(neogeorecomp STATIC
     src/neogeo.c
@@ -68,7 +77,14 @@ add_library(neogeorecomp STATIC
 target_include_directories(neogeorecomp
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(neogeorecomp PUBLIC musashi z80core SDL2::SDL2)
+target_link_libraries(neogeorecomp PUBLIC musashi z80core)
+if(TARGET SDL2::SDL2)
+    target_sources(neogeorecomp PRIVATE src/window_sdl.c)
+    target_compile_definitions(neogeorecomp PRIVATE NG_HAVE_SDL)
+    target_link_libraries(neogeorecomp PUBLIC SDL2::SDL2)
+else()
+    message(STATUS "neogeorecomp: SDL2 not found, building headless-only")
+endif()
 if(MSVC)
     target_compile_definitions(neogeorecomp PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_options(neogeorecomp PRIVATE /W3)

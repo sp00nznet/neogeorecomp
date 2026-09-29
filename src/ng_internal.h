@@ -95,4 +95,9 @@ void platform_audio(const int16_t *samples, size_t frames);
 void platform_shutdown(void);
 int  write_png(const char *path, const uint32_t *argb, int w, int h);
 
+/* ---- window (window_sdl.c, or stubs in platform.c without SDL2) ---- */
+int  window_open(const char *title, int scale);
+bool window_frame(const uint32_t *fb, ng_input_t *in);   /* false = quit */
+void window_close(void);
+
 #endif
