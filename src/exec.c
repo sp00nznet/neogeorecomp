@@ -24,10 +24,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-ng_cpu_t ng_cpu;
-int64_t  ng_cycles;
-int64_t  ng_next_event;
-uint64_t ng_icount;
 uint8_t  ng_irq_pending;
 
 uint64_t exec_native_blocks, exec_interp_instrs;
@@ -93,27 +89,8 @@ void exec_init(const ng_func_entry_t *funcs, size_t nfuncs, int interp_only) {
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 }
 
-/* ---- status register and exceptions ---- */
+/* ---- interrupts ---- */
 
-void ng_set_sr(uint16_t sr) {
-    uint8_t s = (sr >> 13) & 1;
-    if (s != CPU.s) {
-        uint32_t t = CPU.a[7]; CPU.a[7] = CPU.osp; CPU.osp = t;
-        CPU.s = s;
-    }
-    CPU.t = (sr >> 15) & 1;
-    CPU.ipl = (sr >> 8) & 7;
-    ng_set_ccr(sr);
-}
-
-void ng_exception(int vector, uint32_t ret_pc) {
-    uint16_t old = ng_get_sr();
-    ng_set_sr((uint16_t)((old | 0x2000) & ~0x8000));
-    ng_push32(ret_pc);
-    ng_push16(old);
-    CPU.pc = ng_r32((uint32_t)vector * 4);
-    ng_cycles += 34;
-}
 
 static void take_irq(int level) {
     uint16_t old = ng_get_sr();

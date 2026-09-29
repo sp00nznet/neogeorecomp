@@ -314,8 +314,9 @@ void rc_emit_insn(FILE *o, const rc_ctx_t *ctx, const insn_t *in) {
         break;
     case OP_NBCD:
         ea_read(o, &in->dst, 1, "d", "ad");
-        fprintf(o, "uint8_t r = ng_nbcd(d); ");
+        fprintf(o, "uint8_t r; if (ng_nbcd(d, &r)) { ");
         ea_store(o, &in->dst, 1, "r", "ad");
+        fprintf(o, "} ");
         break;
 
     case OP_ASL: case OP_ASR: case OP_LSL: case OP_LSR:

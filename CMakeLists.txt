@@ -57,6 +57,7 @@ find_package(SDL2 CONFIG REQUIRED)
 add_library(neogeorecomp STATIC
     src/neogeo.c
     src/exec.c
+    src/cpu.c
     src/bus.c
     src/lspc.c
     src/video.c
@@ -75,21 +76,57 @@ else()
     target_compile_options(neogeorecomp PRIVATE -Wall -Wextra)
 endif()
 
-if(NEOGEORECOMP_BUILD_TESTS)
-    enable_testing()
-endif()
-
 # ---- m68krecomp: the recompiler, linked into each game's generator ----
-add_library(m68krecomp STATIC
+add_library(m68krecomp_core STATIC
     tools/m68krecomp/decode.c
     tools/m68krecomp/emit.c
     tools/m68krecomp/recomp.c
     src/romload.c)
-target_include_directories(m68krecomp
+target_include_directories(m68krecomp_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tools/m68krecomp)
-target_link_libraries(m68krecomp PUBLIC musashi)
+target_link_libraries(m68krecomp_core PUBLIC musashi)
 if(MSVC)
-    target_compile_definitions(m68krecomp PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_options(m68krecomp PRIVATE /W3)
+    target_compile_definitions(m68krecomp_core PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(m68krecomp_core PRIVATE /W3)
+endif()
+
+# The standalone tool, for flat images (used by the conformance harness).
+add_executable(m68krecomp tools/m68krecomp/main.c)
+target_link_libraries(m68krecomp PRIVATE m68krecomp_core)
+
+target_include_directories(m68krecomp PRIVATE tools/m68krecomp)
+
+# ---- conformance harness (docs/conformance.md) ----
+# Musashi's 68000 test programs, recompiled at build time and run natively.
+if(NEOGEORECOMP_BUILD_TESTS)
+    enable_testing()
+    file(GLOB CONF_BINS ${NG_EXT}/musashi/test/mc68000/*.bin)
+    set(CONF_GEN ${CMAKE_CURRENT_BINARY_DIR}/conformance)
+    file(MAKE_DIRECTORY ${CONF_GEN})
+    set(conf_list "")
+    set(conf_sources "")
+    foreach(bin ${CONF_BINS})
+        get_filename_component(name ${bin} NAME_WE)
+        string(APPEND conf_list "T(${name})\n")
+        set(outs ${CONF_GEN}/t_${name}_recomp_00.c ${CONF_GEN}/t_${name}_recomp_table.c)
+        add_custom_command(
+            OUTPUT ${outs}
+            COMMAND m68krecomp --raw ${bin} --base 0x10000 --entry 0x10000
+                    --prefix t_${name}_ --out ${CONF_GEN} --files 1
+            DEPENDS m68krecomp ${bin}
+            COMMENT "Recompiling conformance program ${name}")
+        list(APPEND conf_sources ${outs})
+    endforeach()
+    file(CONFIGURE OUTPUT ${CONF_GEN}/conformance_list.h CONTENT "${conf_list}")
+    add_executable(ng_conformance tests/conformance/harness.c src/cpu.c ${conf_sources})
+    target_include_directories(ng_conformance PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CONF_GEN})
+    target_link_libraries(ng_conformance PRIVATE musashi)
+    if(MSVC)
+        target_compile_definitions(ng_conformance PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/BASELINE conf_baseline)
+    string(STRIP "${conf_baseline}" conf_baseline)
+    add_test(NAME conformance
+             COMMAND ng_conformance --corpus ${NG_EXT}/musashi/test/mc68000 --min-pass ${conf_baseline})
 endif()

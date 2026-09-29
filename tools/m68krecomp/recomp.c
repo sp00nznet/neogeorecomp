@@ -40,8 +40,9 @@ typedef struct {
     uint32_t      *visit;
 } region_t;
 
-static region_t s_reg[3];
+static region_t s_reg[8];
 static int s_nreg;
+static const char *s_prefix = "";   /* prepended to every emitted symbol */
 
 static region_t *find(uint32_t a) {
     a &= 0xFFFFFF;
@@ -319,8 +320,8 @@ static uint8_t flags_at(uint32_t a) {
 static void emit_routine(FILE *o, int idx) {
     const routine_t *rt = &s_rt[idx];
     rc_ctx_t ctx = {rt->seed, rt->addrs, rt->n};
-    fprintf(o, "\n/* routine $%06X: %d instructions */\nvoid r_%06X(void) {\n    switch (CPU.pc) {\n",
-            rt->seed, rt->n, rt->seed);
+    fprintf(o, "\n/* routine $%06X: %d instructions */\nvoid %sr_%06X(void) {\n    switch (CPU.pc) {\n",
+            rt->seed, rt->n, s_prefix, rt->seed);
     for (int i = 0; i < rt->n; i++) {
         int32_t *ow = owner_slot(rt->addrs[i]);
         if (ow && *ow == idx) fprintf(o, "    case 0x%06Xu: goto L_%06X;\n", rt->addrs[i], rt->addrs[i]);
@@ -356,7 +357,9 @@ static const char k_banner[] =
     " * code: never commit or distribute this file. */\n";
 
 static int write_output(const char *dir, int nfiles, const char *game) {
-    FILE *h = open_out(dir, "recomp_common.h");
+    char hname[96];
+    snprintf(hname, sizeof(hname), "%srecomp_common.h", s_prefix);
+    FILE *h = open_out(dir, hname);
     if (!h) return -1;
     fprintf(h, "%s#pragma once\n#include <neogeorecomp/bus.h>\n#include <neogeorecomp/cpu.h>\n"
                "void ng_bad_dispatch(uint32_t pc);\n"
@@ -367,29 +370,31 @@ static int write_output(const char *dir, int nfiles, const char *game) {
 
     for (int f = 0; f < nfiles; f++) {
         char name[64];
-        snprintf(name, sizeof(name), "recomp_%02d.c", f);
+        snprintf(name, sizeof(name), "%srecomp_%02d.c", s_prefix, f);
         FILE *o = open_out(dir, name);
         if (!o) return -1;
-        fprintf(o, "%s/* %s, part %d of %d */\n#include \"recomp_common.h\"\n", k_banner, game, f + 1, nfiles);
+        fprintf(o, "%s/* %s, part %d of %d */\n#include \"%s\"\n", k_banner, game, f + 1, nfiles, hname);
         for (int i = f; i < s_nrt; i += nfiles) emit_routine(o, i);
         fclose(o);
     }
 
-    FILE *t = open_out(dir, "recomp_table.c");
+    char tname[96];
+    snprintf(tname, sizeof(tname), "%srecomp_table.c", s_prefix);
+    FILE *t = open_out(dir, tname);
     if (!t) return -1;
     fprintf(t, "%s#include <neogeorecomp/neogeo.h>\n\n", k_banner);
-    for (int i = 0; i < s_nrt; i++) fprintf(t, "void r_%06X(void);\n", s_rt[i].seed);
-    fprintf(t, "\nconst ng_func_entry_t ng_recomp_table[] = {\n");
+    for (int i = 0; i < s_nrt; i++) fprintf(t, "void %sr_%06X(void);\n", s_prefix, s_rt[i].seed);
+    fprintf(t, "\nconst ng_func_entry_t %sng_recomp_table[] = {\n", s_prefix);
     size_t count = 0;
     for (int ri = 0; ri < s_nreg; ri++) {
         region_t *r = &s_reg[ri];
         for (uint32_t w = 0; w < r->size / 2; w++) {
             if (r->owner[w] < 0) continue;
-            fprintf(t, "    {0x%06Xu, r_%06X},\n", r->base + w * 2, s_rt[r->owner[w]].seed);
+            fprintf(t, "    {0x%06Xu, %sr_%06X},\n", r->base + w * 2, s_prefix, s_rt[r->owner[w]].seed);
             count++;
         }
     }
-    fprintf(t, "};\nconst size_t ng_recomp_count = %zu;\n", count);
+    fprintf(t, "};\nconst size_t %sng_recomp_count = %zu;\n", s_prefix, count);
     fclose(t);
     fprintf(stderr, "[m68krecomp] %d routines, %zu dispatch entries -> %s\n", s_nrt, count, dir);
     return 0;
@@ -423,6 +428,39 @@ static int load_entries(const char *path) {
     fclose(f);
     fprintf(stderr, "[m68krecomp] %d extra entry points from %s\n", n, path);
     return 0;
+}
+
+static int generate(const char *out, int nfiles, const char *name, int scan_pointers) {
+    if (scan_pointers) {
+        /* Code reached only through data (task tables, state pointers):
+         * any aligned 32-bit value in the program that points at plausible
+         * code becomes a seed. */
+        size_t before = s_nwork;
+        for (int ri = 0; ri < s_nreg; ri++)
+            for (uint32_t off = 0; off + 4 <= s_reg[ri].size; off += 2)
+                note_code_pointer(rd32(s_reg[ri].base + off));
+        fprintf(stderr, "[m68krecomp] pointer scan: %zu seeds\n", s_nwork - before);
+    }
+
+    while (s_nwork) explore(s_work[--s_nwork]);
+
+    /* Seeds own themselves; other entry points go to the first routine
+     * that contains them. */
+    for (int i = 0; i < s_nrt; i++) {
+        int32_t *ow = owner_slot(s_rt[i].seed);
+        if (ow && s_rt[i].n > 0) *ow = i;
+    }
+    for (int i = 0; i < s_nrt; i++)
+        for (int k = 0; k < s_rt[i].n; k++) {
+            uint32_t a = s_rt[i].addrs[k];
+            int32_t *ow = owner_slot(a);
+            if (ow && *ow < 0 && (flags_at(a) & (F_SEED | F_LABEL))) *ow = i;
+        }
+
+    size_t insns = 0;
+    for (int i = 0; i < s_nrt; i++) insns += (size_t)s_rt[i].n;
+    fprintf(stderr, "[m68krecomp] %s: %zu instructions emitted across routines\n", name, insns);
+    return write_output(out, nfiles, name) ? 1 : 0;
 }
 
 int ng_recomp_main(int argc, char **argv, const ng_game_t *game) {
@@ -470,34 +508,44 @@ int ng_recomp_main(int argc, char **argv, const ng_game_t *game) {
      * DEMO_END, COIN_SOUND. */
     add_seed(0x122); add_seed(0x128); add_seed(0x12E); add_seed(0x134);
     for (int i = 0; i < nentries; i++) if (load_entries(entries[i])) return 1;
-    if (scan_pointers) {
-        /* Code reached only through data (task tables, state pointers):
-         * any aligned 32-bit value in the program that points at plausible
-         * code becomes a seed. */
-        size_t before = s_nwork;
-        for (int ri = 0; ri < s_nreg; ri++)
-            for (uint32_t off = 0; off + 4 <= s_reg[ri].size; off += 2)
-                note_code_pointer(rd32(s_reg[ri].base + off));
-        fprintf(stderr, "[m68krecomp] pointer scan: %zu seeds\n", s_nwork - before);
-    }
+    return generate(out, nfiles, game->name, scan_pointers);
+}
 
-    while (s_nwork) explore(s_work[--s_nwork]);
-
-    /* Seeds own themselves; other entry points go to the first routine
-     * that contains them. */
-    for (int i = 0; i < s_nrt; i++) {
-        int32_t *ow = owner_slot(s_rt[i].seed);
-        if (ow && s_rt[i].n > 0) *ow = i;
-    }
-    for (int i = 0; i < s_nrt; i++)
-        for (int k = 0; k < s_rt[i].n; k++) {
-            uint32_t a = s_rt[i].addrs[k];
-            int32_t *ow = owner_slot(a);
-            if (ow && *ow < 0 && (flags_at(a) & (F_SEED | F_LABEL))) *ow = i;
+/* ---- raw images ----
+ * m68krecomp --raw FILE --base ADDR [--entry ADDR]... --prefix P --out DIR
+ * Recompiles a flat big-endian 68000 image (the conformance corpus uses
+ * this); seeds are the given entries plus the usual pointer scan. */
+int rc_raw_main(int argc, char **argv) {
+    const char *raw = NULL, *out = "generated";
+    uint32_t base = 0, ents[32];
+    int nents = 0, nfiles = 1;
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i], *next = i + 1 < argc ? argv[i + 1] : NULL;
+        if (!strcmp(a, "--raw") && next) { raw = next; i++; }
+        else if (!strcmp(a, "--base") && next) { base = (uint32_t)strtoul(next, NULL, 0); i++; }
+        else if (!strcmp(a, "--entry") && next && nents < 32) { ents[nents++] = (uint32_t)strtoul(next, NULL, 0); i++; }
+        else if (!strcmp(a, "--prefix") && next) { s_prefix = next; i++; }
+        else if (!strcmp(a, "--out") && next) { out = next; i++; }
+        else if (!strcmp(a, "--files") && next) { nfiles = atoi(next); i++; }
+        else {
+            fprintf(stderr, "usage: m68krecomp --raw FILE --base ADDR [--entry ADDR]... [--prefix P] [--out DIR] [--files N]\n");
+            return 2;
         }
-
-    size_t insns = 0;
-    for (int i = 0; i < s_nrt; i++) insns += (size_t)s_rt[i].n;
-    fprintf(stderr, "[m68krecomp] %s: %zu instructions emitted across routines\n", game->name, insns);
-    return write_output(out, nfiles, game->name) ? 1 : 0;
+    }
+    if (!raw || !nents) { fprintf(stderr, "error: --raw and at least one --entry are required\n"); return 2; }
+    FILE *f = fopen(raw, "rb");
+    if (!f) { fprintf(stderr, "error: cannot open %s\n", raw); return 1; }
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint32_t size = ((uint32_t)n + 0xFFFF) & ~0xFFFFu;   /* whole pages: reads past the end see zero */
+    uint8_t *img = (uint8_t *)calloc(1, size);
+    if (fread(img, 1, (size_t)n, f) != (size_t)n) { fclose(f); return 1; }
+    fclose(f);
+    add_region("raw", base, size, img);
+    m68k_init();
+    m68k_set_cpu_type(M68K_CPU_TYPE_68000);
+    for (int i = 0; i < nents; i++) add_seed(ents[i]);
+    if (nfiles < 1) nfiles = 1;
+    return generate(out, nfiles, raw, 1);
 }

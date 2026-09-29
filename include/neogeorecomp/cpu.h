@@ -247,20 +247,24 @@ static inline uint8_t ng_sbcd(uint8_t s, uint8_t d) {
     if (res) CPU.z = 0;
     return (uint8_t)res;
 }
-static inline uint8_t ng_nbcd(uint8_t d) {
+/* NBCD: returns false when the result is zero, in which case the 68000
+ * leaves the destination unwritten. */
+static inline bool ng_nbcd(uint8_t d, uint8_t *out) {
     uint32_t res = (0x9A - d - CPU.x) & 0xFF;
-    if (res != 0x9A) {
+    bool store = res != 0x9A;
+    if (store) {
         uint32_t v = ~res;
         if ((res & 0x0F) == 0x0A) res = (res & 0xF0) + 0x10;
         res &= 0xFF;
         CPU.v = (uint8_t)(((v & res) >> 7) & 1);
         if (res) CPU.z = 0;
         CPU.c = CPU.x = 1;
+        *out = (uint8_t)res;
     } else {
         CPU.v = 0; CPU.c = 0; CPU.x = 0;
     }
     CPU.n = (uint8_t)((res >> 7) & 1);
-    return (uint8_t)res;
+    return store;
 }
 
 /* CHK: returns true when the bound check fails (caller raises vector 6). */
