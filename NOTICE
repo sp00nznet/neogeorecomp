@@ -1,0 +1,18 @@
+neogeorecomp
+Copyright (c) 2026 sp00nznet. MIT License (see LICENSE).
+
+This project includes, as git submodules under ext/, the following
+third-party software. Each keeps its own licence, reproduced in its
+directory:
+
+- Musashi (ext/musashi) - Motorola 68000 emulator
+  Copyright (c) 1998-2001 Karl Stenerud. MIT License.
+  https://github.com/kstenerud/Musashi
+  Used as the fallback interpreter, the --verify oracle, the source of
+  68000 base cycle counts, and (ext/musashi/test/mc68000) the conformance
+  corpus.
+
+- z80 (ext/z80) - Zilog Z80 emulator
+  Copyright (c) 2019 Nicolas Allemand. MIT License.
+  https://github.com/superzazu/z80
+  Used as the sound CPU.

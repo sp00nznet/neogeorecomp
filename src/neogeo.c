@@ -72,6 +72,7 @@ static int parse_args(int argc, char **argv, options_t *o) {
             o->shots[o->nshots].path = colon + 1;
             o->nshots++; i++;
         }
+        else if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(argv[0]); exit(0); }
         else { usage(argv[0]); return -1; }
     }
     if (!o->bios_path) o->bios_path = o->rom_path;
