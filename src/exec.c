@@ -182,6 +182,33 @@ static void note_miss(uint32_t a) {
     if (s_nmiss < MISS_MAX) s_miss[s_nmiss++] = a & 0xFFFFFE;
 }
 
+/* Where interpretation starts, weighted by how long it runs before
+ * reaching native code: the recompiler's biggest coverage gaps first.
+ * Printed by exec_report() when NG_PROFILE is set. */
+#define PROF_SLOTS 4096
+static struct { uint32_t pc; uint64_t n; } s_prof[PROF_SLOTS];
+
+static void profile_add(uint32_t pc, uint64_t n) {
+    uint32_t h = (pc * 2654435761u) % PROF_SLOTS;
+    for (int i = 0; i < PROF_SLOTS; i++, h = (h + 1) % PROF_SLOTS) {
+        if (s_prof[h].n == 0 || s_prof[h].pc == pc) { s_prof[h].pc = pc; s_prof[h].n += n; return; }
+    }
+}
+
+static void profile_print(void) {
+    for (int k = 0; k < 20; k++) {
+        int best = -1;
+        for (int i = 0; i < PROF_SLOTS; i++)
+            if (s_prof[i].n && (best < 0 || s_prof[i].n > s_prof[best].n)) best = i;
+        if (best < 0) break;
+        char buf[128];
+        m68k_disassemble(buf, s_prof[best].pc, M68K_CPU_TYPE_68000);
+        fprintf(stderr, "[profile] %10llu interpreted from $%06X  %s\n",
+                (unsigned long long)s_prof[best].n, s_prof[best].pc, buf);
+        s_prof[best].n = 0;
+    }
+}
+
 static void interpret(void) {
     to_musashi();
     if (s_interp_only) {
@@ -193,7 +220,8 @@ static void interpret(void) {
     } else {
         /* Step until control reaches code that has a native entry. */
         note_miss(CPU.pc);
-        uint32_t prev = CPU.pc;
+        uint32_t prev = CPU.pc, start = CPU.pc;
+        uint64_t before = exec_interp_instrs;
         while (ng_cycles < ng_next_event && !mus_stopped()) {
             ng_cycles += m68k_execute(1);
             exec_interp_instrs++;
@@ -204,6 +232,7 @@ static void interpret(void) {
             if (pc < prev || pc > prev + 10) note_miss(pc);
             prev = pc;
         }
+        profile_add(start, exec_interp_instrs - before);
     }
     from_musashi();
 }
@@ -351,6 +380,7 @@ void exec_report(void) {
     if (s_verify)
         fprintf(stderr, "[verify] %llu blocks checked, %llu mismatches\n",
                 (unsigned long long)s_verify_blocks, (unsigned long long)s_verify_fails);
+    if (getenv("NG_PROFILE")) profile_print();
     fprintf(stderr, "[exec] native blocks %llu, interpreted instructions %llu, %zu uncovered entry points\n",
             (unsigned long long)exec_native_blocks, (unsigned long long)exec_interp_instrs, s_nmiss);
     (void)total;

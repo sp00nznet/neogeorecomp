@@ -125,6 +125,75 @@ static int cmp_u32(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
+/* Would `a` make sense as the start of code? Follows fall-through for up
+ * to 256 instructions and accepts on reaching a return or jump. Rejects
+ * illegal/line-A/line-F opcodes and `ori.b #0,d0` (the decode of zeroed
+ * data, which no assembler emits). Used to vet addresses that code only
+ * takes the address of, which may be data. */
+static int plausible_code(uint32_t a) {
+    for (int i = 0; i < 256; i++) {
+        const insn_t *in = decode_at(a);
+        if (!in) return 0;
+        if (in->op == OP_ILLEGAL || in->op == OP_LINEA || in->op == OP_LINEF) return 0;
+        if (in->opcode == 0x0000 && in->src.value == 0) return 0;
+        switch (in->op) {
+        case OP_RTS: case OP_RTE: case OP_RTR: case OP_JMP: case OP_BRA: return 1;
+        default: break;
+        }
+        a += (uint32_t)in->len;
+    }
+    return 0;
+}
+
+/* Candidate code pointers: the task/coroutine style Neo Geo games use
+ * stores resume addresses with `lea (next,pc),a1` or `move.l #next,...`
+ * and later reaches them with `jmp (a0)`. */
+static void note_code_pointer(uint32_t t) {
+    t &= 0xFFFFFF;
+    region_t *r = find(t);
+    if (!r || (t & 1) || (r->flags[(t - r->base) >> 1] & F_SEED)) return;
+    if (t < 0x200 && r->base == 0) return;    /* vectors and cartridge header */
+    if (plausible_code(t)) add_seed(t);
+}
+
+/* ---- jump tables ----
+ * The three shapes 68000 code uses for switch statements; every entry is
+ * vetted by plausible_code(), and a scan stops at the first entry that is
+ * not code, so a misread table costs nothing. */
+
+static uint16_t rd16(uint32_t a) { int ok = 1; return img_read16(a, &ok); }
+static uint32_t rd32(uint32_t a);
+
+/* movea.l tbl(pc,d0.w),a0 ; jmp (a0)   -- absolute pointers */
+static void scan_long_table(uint32_t t) {
+    for (int k = 0; k < 256; k++) {
+        uint32_t v = rd32(t + 4u * k) & 0xFFFFFF;
+        region_t *r = find(v);
+        if (!r || (v & 1) || !plausible_code(v)) break;
+        add_seed(v);
+    }
+}
+
+/* move.w tbl(pc,d0.w),d0 ; jmp base(pc,d0.w)   -- 16-bit offsets from base */
+static void scan_word_table(uint32_t t, uint32_t base) {
+    for (int k = 0; k < 256; k++) {
+        uint32_t v = (base + (uint32_t)(int32_t)(int16_t)rd16(t + 2u * k)) & 0xFFFFFF;
+        if (!find(v) || (v & 1) || !plausible_code(v)) break;
+        add_seed(v);
+    }
+}
+
+/* jmp tbl(pc,d0.w) into a run of bra/jmp instructions -- the landing
+ * addresses are the branch instructions themselves */
+static void scan_branch_table(uint32_t t) {
+    for (int k = 0; k < 256; k++) {
+        const insn_t *in = decode_at(t);
+        if (!in || (in->op != OP_BRA && in->op != OP_JMP)) break;
+        add_seed(t);
+        t += (uint32_t)in->len;
+    }
+}
+
 static int static_target(const ea_t *e, uint32_t *t) {
     if (e->mode == EA_ABS || e->mode == EA_PCD16) { *t = e->value & 0xFFFFFF; return 1; }
     return 0;
@@ -136,6 +205,10 @@ static void explore(uint32_t seed) {
     size_t nstack = 0, capstack = 0, nlist = 0, caplist = 0;
 #define PUSH(v) do { if (nstack == capstack) { capstack = capstack ? capstack * 2 : 256; \
     stack = (uint32_t *)realloc(stack, capstack * 4); } stack[nstack++] = (v); } while (0)
+    /* Table bases seen in this routine: what `lea tbl(pc),An` left in each
+     * address register, and the last `move.w tbl(pc,Xn),Dn` offset table. */
+    uint32_t lea_pc[8] = {0};
+    uint32_t word_table = 0;
     PUSH(seed);
     while (nstack) {
         uint32_t a = stack[--nstack];
@@ -149,6 +222,27 @@ static void explore(uint32_t seed) {
         if (nlist == caplist) { caplist = caplist ? caplist * 2 : 256; list = (uint32_t *)realloc(list, caplist * 4); }
         list[nlist++] = a;
         uint32_t next = a + (uint32_t)in->len, t;
+        if ((in->op == OP_LEA || in->op == OP_PEA) && in->src.mode == EA_PCD16) note_code_pointer(in->src.value);
+        if (in->src.mode == EA_IMM && in->size == 4 && (in->op == OP_MOVE || in->op == OP_MOVEA))
+            note_code_pointer(in->src.value);
+        if (in->op == OP_LEA && in->src.mode == EA_PCD16) lea_pc[in->dst.reg] = in->src.value;
+        if ((in->op == OP_MOVE || in->op == OP_MOVEA) && in->size == 4) {
+            if (in->src.mode == EA_PCIDX) scan_long_table(in->src.value);
+            if (in->src.mode == EA_IDX && lea_pc[in->src.reg]) scan_long_table(lea_pc[in->src.reg] + in->src.disp);
+        }
+        if (in->op == OP_MOVE && in->size == 2 && in->dst.mode == EA_DN) {
+            if (in->src.mode == EA_PCIDX) word_table = in->src.value;
+            if (in->src.mode == EA_IDX && lea_pc[in->src.reg]) word_table = lea_pc[in->src.reg] + in->src.disp;
+        }
+        if (in->op == OP_JMP || in->op == OP_JSR) {
+            uint32_t base = 0;
+            if (in->src.mode == EA_PCIDX) base = in->src.value;
+            if (in->src.mode == EA_IDX && lea_pc[in->src.reg]) base = lea_pc[in->src.reg] + in->src.disp;
+            if (base) {
+                if (word_table) scan_word_table(word_table, base);
+                scan_branch_table(base);
+            }
+        }
         switch (in->op) {
         case OP_BRA:
             if (in->target <= a) mark_label(in->target);
@@ -334,7 +428,7 @@ static int load_entries(const char *path) {
 int ng_recomp_main(int argc, char **argv, const ng_game_t *game) {
     const char *rom_path = "roms", *bios_path = NULL, *bios_name = "sp-s2.sp1", *out = "generated";
     const char *entries[16];
-    int nentries = 0, nfiles = 16;
+    int nentries = 0, nfiles = 16, scan_pointers = 1;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *next = i + 1 < argc ? argv[i + 1] : NULL;
         if (!strcmp(a, "--rom-path") && next) { rom_path = next; i++; }
@@ -342,6 +436,7 @@ int ng_recomp_main(int argc, char **argv, const ng_game_t *game) {
         else if (!strcmp(a, "--bios") && next) { bios_name = next; i++; }
         else if (!strcmp(a, "--out") && next) { out = next; i++; }
         else if (!strcmp(a, "--files") && next) { nfiles = atoi(next); i++; }
+        else if (!strcmp(a, "--no-pointer-scan")) scan_pointers = 0;
         else if (!strcmp(a, "--entries") && next && nentries < 16) { entries[nentries++] = next; i++; }
         else {
             fprintf(stderr, "usage: %s [--rom-path DIR] [--bios-path DIR] [--bios FILE] [--out DIR]\n"
@@ -375,6 +470,16 @@ int ng_recomp_main(int argc, char **argv, const ng_game_t *game) {
      * DEMO_END, COIN_SOUND. */
     add_seed(0x122); add_seed(0x128); add_seed(0x12E); add_seed(0x134);
     for (int i = 0; i < nentries; i++) if (load_entries(entries[i])) return 1;
+    if (scan_pointers) {
+        /* Code reached only through data (task tables, state pointers):
+         * any aligned 32-bit value in the program that points at plausible
+         * code becomes a seed. */
+        size_t before = s_nwork;
+        for (int ri = 0; ri < s_nreg; ri++)
+            for (uint32_t off = 0; off + 4 <= s_reg[ri].size; off += 2)
+                note_code_pointer(rd32(s_reg[ri].base + off));
+        fprintf(stderr, "[m68krecomp] pointer scan: %zu seeds\n", s_nwork - before);
+    }
 
     while (s_nwork) explore(s_work[--s_nwork]);
 
