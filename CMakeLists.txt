@@ -158,4 +158,16 @@ if(NEOGEORECOMP_BUILD_TESTS)
     string(STRIP "${conf_baseline}" conf_baseline)
     add_test(NAME conformance
              COMMAND ng_conformance --corpus ${NG_EXT}/musashi/test/mc68000 --min-pass ${conf_baseline})
+
+    # Gamepad input, through SDL's virtual joystick (no window or device needed).
+    if(TARGET SDL2::SDL2)
+        add_executable(ng_gamepad_test tests/gamepad_test.c src/window_sdl.c)
+        target_include_directories(ng_gamepad_test PRIVATE src include)
+        target_link_libraries(ng_gamepad_test PRIVATE SDL2::SDL2)
+        if(WIN32)
+            add_custom_command(TARGET ng_gamepad_test POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_RUNTIME_DLLS:ng_gamepad_test> $<TARGET_FILE_DIR:ng_gamepad_test> COMMAND_EXPAND_LISTS)
+        endif()
+        add_test(NAME gamepad COMMAND ng_gamepad_test)
+    endif()
 endif()

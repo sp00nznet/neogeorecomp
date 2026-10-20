@@ -37,7 +37,9 @@ Frame numbers count 59.19 Hz video frames from power-on. The MVS BIOS eyecatcher
 
 ## Windowed play
 
-Keys: arrows; **Z X C V** = A B C D; **5** = coin; **1** = start (P1); **2** = start (P2); **3** = select; **9** = service; **F2** = test switch; **Esc** = quit. `--mute` turns the sound off; `--wav FILE` writes it to a file, also headless.
+Keys: arrows; **Z X C V** = A B C D; **5** = coin; **1** = start (P1); **2** = start (P2); **3** = select; **9** = service; **F2** = test switch; **Esc** = quit.
+
+Gamepads work beside the keyboard: the first one connected is player 1, the second player 2, and they can be plugged in while the game runs. D-pad or left stick; **A B X Y** (Xbox layout; the same positions on any pad SDL knows) = Neo Geo **A B C D**; **Start** = start; **Back** = coin; **left shoulder** = select. The layout is fixed for now (remapping is on the roadmap). A pad SDL doesn't recognise can be described with the `SDL_GAMECONTROLLERCONFIG` environment variable (SDL's own mapping format). `--mute` turns the sound off; `--wav FILE` writes it to a file, also headless.
 
 On an MVS you insert a coin before Start does anything.
 
