@@ -1,0 +1,84 @@
+# Builds the toolkit on Windows, Linux and macOS and, on a v* tag, attaches a
+# bundle per platform to the GitHub release.
+#
+# The bundle is the standalone m68krecomp tool plus the docs: what you can use
+# without a game repo. Games don't consume prebuilt libraries; they build the
+# toolkit from source as a submodule, so no static libraries ship here.
+# Nothing derived from a ROM is ever built or shipped by this workflow.
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:      # dry run: builds and uploads to the run, publishes nothing
+  pull_request:           # a change to this file gets a dry run too
+    paths: [ '.github/workflows/release.yml' ]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: win-x64,   os: windows-latest }
+          - { platform: linux-x64, os: ubuntu-latest }
+          - { platform: mac-arm64, os: macos-14 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --config Release --parallel
+
+      # A tag can sit on a commit no push workflow ran on; a release is only
+      # as good as the conformance count it was built with.
+      - run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage the bundle
+        run: |
+          set -e
+          VER="${GITHUB_REF_NAME//\//-}"     # a dry run on a branch may have a slash
+          NAME="neogeorecomp-${VER}-${{ matrix.platform }}"
+          STAGE="dist/$NAME"
+          mkdir -p "$STAGE/docs"
+          find build -type f \( -name m68krecomp -o -name m68krecomp.exe \) -exec cp {} "$STAGE/" \;
+          ls "$STAGE"/m68krecomp* >/dev/null
+          cp README.md LICENSE NOTICE CONTRIBUTORS.md CHANGELOG.md "$STAGE/"
+          cp docs/*.md "$STAGE/docs/"
+          { echo "neogeorecomp $VER (${{ matrix.platform }})"
+            echo "commit: $GITHUB_SHA"; } > "$STAGE/VERSION.txt"
+          (cd dist && cmake -E tar cf "$NAME.zip" --format=zip "$NAME")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neogeorecomp-${{ matrix.platform }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: cd dist && sha256sum *.zip | tee SHA256SUMS.txt
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # keep hand-written notes when the release already exists
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS.txt --clobber

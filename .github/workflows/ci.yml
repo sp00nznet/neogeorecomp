@@ -9,18 +9,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # Linux builds the SDL2 window; Windows builds headless-only, which is
+      # Linux and macOS build the SDL2 window; Windows builds headless-only, which is
       # what the conformance harness needs and keeps the job fast.
       - name: Install SDL2
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+
+      - name: Install SDL2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl2
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release

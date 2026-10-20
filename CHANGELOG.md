@@ -7,6 +7,7 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 The runtime is rebuilt as a generic model of the MVS board (#1). The previous runtime (v0.1.0) was shaped around Neo Drift Out with title-specific patches; nothing from it survives except the name.
 
 ### Added
+- **macOS** (Apple Silicon) in CI beside Ubuntu and Windows, and a release workflow: a `v*` tag attaches a Windows, Linux and macOS bundle of the standalone `m68krecomp` tool and the docs, after the conformance harness passes on each.
 - **Sound**: YM2610 synthesis (FM, SSG, ADPCM-A/B from the V ROMs) through [ymfm](https://github.com/aaronsgiles/ymfm) (BSD-3, ext/ymfm). Samples are generated up to the Z80's clock before each register write, at the chip's rate (8 MHz / 144); the window plays them through SDL2, `--wav FILE` writes them, `--mute` silences the window. The YM2610 timers and IRQ stay modelled in `audio.c`. — *[@danilopaulinodasilva](https://github.com/danilopaulinodasilva)* (#3)
 - **m68krecomp**, the 68000 static recompiler: a full 68000 decoder; recursive-descent discovery from vectors, cartridge header entry points, static call targets, jump tables and code pointers; readable C output with address and disassembly on every line; `--entries` for runtime-found entry points; a `--raw` mode and a standalone tool for flat images.
 - **Flat dispatch execution model**: return addresses on the emulated stack, interrupts as real 68000 exceptions, and a [Musashi](https://github.com/kstenerud/Musashi) fallback for addresses without a recompiled entry.
