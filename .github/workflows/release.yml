@@ -53,6 +53,7 @@ jobs:
           find build -type f \( -name m68krecomp -o -name m68krecomp.exe \) -exec cp {} "$STAGE/" \;
           ls "$STAGE"/m68krecomp* >/dev/null
           cp README.md LICENSE NOTICE CONTRIBUTORS.md CHANGELOG.md "$STAGE/"
+          cp -r LICENSES "$STAGE/"
           cp docs/*.md "$STAGE/docs/"
           { echo "neogeorecomp $VER (${{ matrix.platform }})"
             echo "commit: $GITHUB_SHA"; } > "$STAGE/VERSION.txt"

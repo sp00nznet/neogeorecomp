@@ -3,21 +3,21 @@ Copyright (c) 2026 sp00nznet. MIT License (see LICENSE).
 
 This project includes, as git submodules under ext/, the following
 third-party software. Each keeps its own licence, reproduced in its
-directory:
+directory and in LICENSES/:
 
 - Musashi (ext/musashi) - Motorola 68000 emulator
   Copyright (c) 1998-2001 Karl Stenerud. MIT License.
-  https://github.com/kstenerud/Musashi
+  https://github.com/kstenerud/Musashi, commit 313ebf1. LICENSES/Musashi.txt
   Used as the fallback interpreter, the --verify oracle, the source of
   68000 base cycle counts, and (ext/musashi/test/mc68000) the conformance
   corpus.
 
 - z80 (ext/z80) - Zilog Z80 emulator
   Copyright (c) 2019 Nicolas Allemand. MIT License.
-  https://github.com/superzazu/z80
+  https://github.com/superzazu/z80, commit d64fe10. LICENSES/z80.txt
   Used as the sound CPU.
 
 - ymfm (ext/ymfm) - Yamaha FM sound chip emulator
   Copyright (c) 2021 Aaron Giles. BSD 3-Clause License.
-  https://github.com/aaronsgiles/ymfm
+  https://github.com/aaronsgiles/ymfm, commit 81aec25. LICENSES/ymfm.txt
   Synthesizes the YM2610: FM, SSG and ADPCM-A/B.
