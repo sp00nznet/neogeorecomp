@@ -162,7 +162,7 @@ docs/                  architecture, recompiler, running, conformance, porting a
 - [docs/conformance.md](docs/conformance.md): the harness and how to read its numbers
 - [docs/porting-a-game.md](docs/porting-a-game.md): bringing up a new title
 - [docs/hardware-notes.md](docs/hardware-notes.md): the details that took the longest to get right
-- [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
+- [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [CONTRIBUTORS.md](CONTRIBUTORS.md)
 
 ## House style
 
@@ -170,7 +170,7 @@ This repo follows the shared layout of the sp00nznet recomp toolkits (lynxrecomp
 
 ## Contributors
 
-No outside contributions yet. When there are, they will be credited in `CONTRIBUTORS.md`. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to send one.
+Everyone who has contributed is credited, with what they did, in **[CONTRIBUTORS.md](CONTRIBUTORS.md)**. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to send a contribution.
 
 ## Credits
 
