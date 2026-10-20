@@ -28,7 +28,7 @@ Games live in their own repos and pull this one in as a submodule:
 | Video | Per-scanline sprites (sticky chains, L0-ROM vertical shrink, horizontal shrink, 96-per-line limit, auto-animation), fix layer, both palette banks, raster timer IRQ. |
 | I/O | Controllers, coin/service, DIPs, system latch, uPD4990A calendar, backup RAM lock. |
 | Audio | The Z80 runs the real sound driver (NMI command latch, reply latch, ROM banking, YM2610 timers). The YM2610's FM, SSG and ADPCM-A/B are synthesized by [ymfm](https://github.com/aaronsgiles/ymfm), clocked by the Z80, and played through SDL2 or written with `--wav`. |
-| Platforms | Windows (MSVC 2022) and Linux (gcc), both verified locally; the CI workflow builds both and runs conformance. The SDL2 window is optional; headless builds need nothing extra. |
+| Platforms | Windows (MSVC 2022) and Linux (gcc), both verified locally with games; macOS (Apple Silicon, clang) builds and passes conformance in CI, but no game has been run on a Mac yet. CI builds all three and runs conformance; a `v*` tag attaches a bundle of the `m68krecomp` tool for each. The SDL2 window is optional; headless builds need nothing extra. |
 
 ### Compatibility
 
@@ -82,7 +82,7 @@ The toolkit is a library, so you use it through a game repo. The quickest way to
 
 To build the toolkit on its own and run the conformance harness (no game data needed):
 
-1. Install **Git**, **CMake 3.20+** and a C compiler: Visual Studio 2022 with *Desktop development with C++* on Windows, or `gcc` on Linux. SDL2 is optional (vcpkg `sdl2` on Windows, `libsdl2-dev` on Linux).
+1. Install **Git**, **CMake 3.20+** and a C and C++ compiler: Visual Studio 2022 with *Desktop development with C++* on Windows, `gcc` and `g++` on Linux, or Xcode's command line tools on macOS. SDL2 is optional (vcpkg `sdl2` on Windows, `libsdl2-dev` on Linux, `brew install sdl2` on macOS).
 2. Clone with submodules:
    ```
    git clone --recurse-submodules https://github.com/sp00nznet/neogeorecomp
@@ -98,7 +98,7 @@ To build the toolkit on its own and run the conformance harness (no game data ne
    ```
    100% tests passed, 0 tests failed out of 1
    ```
-   To see each program, run the harness directly with `build/Release/ng_conformance --corpus ext/musashi/test/mc68000 -v` (on Linux, `build/ng_conformance`). It ends with `conformance: 59/60 68000 test programs pass recompiled (reference interpreter: 59/60)`.
+   To see each program, run the harness directly with `build/Release/ng_conformance --corpus ext/musashi/test/mc68000 -v` (on Linux and macOS, `build/ng_conformance`). It ends with `conformance: 59/60 68000 test programs pass recompiled (reference interpreter: 59/60)`.
 
 Common trip-ups:
 - *"Submodules missing"*: you cloned without `--recurse-submodules`. Run `git submodule update --init`.
