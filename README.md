@@ -13,7 +13,7 @@ Games live in their own repos and pull this one in as a submodule:
 
 ## Status
 
-**v0.2.0-dev, alpha.** Metal Slug and Neo Drift Out are playable.
+**v0.2.0, alpha.** Metal Slug and Neo Drift Out are playable, with sound and gamepads.
 
 ![Metal Slug gameplay, rendered by the recompiled C](docs/screenshots/mslug-tank.png)
 
