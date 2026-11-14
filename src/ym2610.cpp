@@ -74,4 +74,9 @@ void ym2610_generate(int16_t *out, size_t n) {
     }
 }
 
+void ym2610_shutdown(void) {
+    delete s_chip;
+    s_chip = nullptr;
+}
+
 }

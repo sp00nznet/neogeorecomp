@@ -23,7 +23,7 @@ error: missing ROM files; see docs/running.md for the expected set
   --bios-path DIR       system ROM files (default: the ROM path)
   --bios FILE           system ROM (default: sp-s2.sp1, MVS Asia/Europe)
   --headless            no window; run as fast as possible
-  --record FILE.mp4     pipe frames to ffmpeg
+  --record FILE.mp4     pipe frames to ffmpeg (native only)
   --frames N            stop after N frames
   --screenshot N:FILE   save frame N as PNG (repeatable)
   --input FILE          scripted input (see docs/running.md)

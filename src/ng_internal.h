@@ -86,15 +86,18 @@ int  exec_dump_misses(const char *path);
 void exec_set_verify(int on);           /* check every native block against Musashi */
 void exec_irq_changed(void);            /* an IRQ line changed (tell Musashi if it is running) */
 void exec_event_changed(int64_t at);    /* an event was scheduled; end the slice early if needed */
+void exec_shutdown(void);
 extern uint64_t exec_native_blocks, exec_interp_instrs;
 
 /* ---- host platform (platform.c) ---- */
 void platform_early_init(void);       /* crash reporting; call first */
 int  platform_init(const char *title, int scale, int headless, const char *record_path);
-bool platform_frame(const uint32_t *fb, ng_input_t *in);  /* false = quit */
+bool platform_poll(ng_input_t *in);   /* false = quit */
+void platform_present(const uint32_t *fb);
 void platform_audio(const int16_t *samples, size_t frames);
 int  platform_wav(const char *path);      /* also write the audio to a WAV file */
 void platform_mute(void);                 /* no sound from the window */
+void platform_pause(int paused);          /* pause/resume window audio */
 void platform_shutdown(void);
 int  write_png(const char *path, const uint32_t *argb, int w, int h);
 
@@ -102,6 +105,7 @@ int  write_png(const char *path, const uint32_t *argb, int w, int h);
 int  window_open(const char *title, int scale);
 bool window_frame(const uint32_t *fb, ng_input_t *in);   /* false = quit */
 void window_audio(const int16_t *samples, size_t frames);
+void window_pause_audio(int paused);
 void window_close(void);
 
 #endif

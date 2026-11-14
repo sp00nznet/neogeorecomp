@@ -11,7 +11,7 @@ A game repo contributes a ROM layout (`ng_game_t`) and nothing else. It has no a
 
 | File | Owns |
 |---|---|
-| `src/neogeo.c` | `ng_main()`: command line, ROM loading, power-on, the frame loop, scripted input, screenshots |
+| `src/neogeo.c` | runtime lifecycle (`ng_init()`, `ng_step_frame()`, `ng_shutdown()`), `ng_main()` CLI, Emscripten loop, scripted input, screenshots |
 | `src/exec.c` | the dispatcher: interrupts, native-or-interpreted choice, Musashi hand-over, `--verify`, `--dump-misses` |
 | `src/cpu.c`, `include/neogeorecomp/cpu.h` | the register file, SR writes, exception entry, and the flag-correct ALU helpers generated code calls |
 | `src/bus.c`, `include/neogeorecomp/bus.h` | the 68000 memory map: page table for plain memory, slow path for devices, the `--verify` access log |
@@ -64,7 +64,7 @@ run_frame()
     visible line? video_render_line()
     line 240: run to pixel $11F, lspc_vblank(): IRQ1, auto-anim, timer autoload
   audio_sync()                       Z80 catches up to the end of the frame
-platform_frame()                     window present + input, or ffmpeg pipe, or nothing
+platform_poll() / platform_present() window present + input, or ffmpeg pipe, or nothing
 ```
 
 `exec_run()` loops: take the highest pending interrupt the mask allows (a real 68000 exception frame on the emulated stack), then look up `CPU.pc`. If there is a recompiled entry, call it. It returns when control leaves the routine. Otherwise Musashi steps until it reaches an address that has one. The dispatcher is the only place control transfers between routines (docs/recompiler.md explains why).

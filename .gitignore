@@ -1,4 +1,6 @@
 build/
+build-wasm/
+build-*/
 cmake-build-*/
 .vs/
 .vscode/

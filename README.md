@@ -139,9 +139,23 @@ See Getting Started above. Build options:
 | Option | Default | Effect |
 |---|---|---|
 | `NEOGEORECOMP_BUILD_TESTS` | on when top-level | Build `ng_conformance` and register it with CTest |
-| SDL2 found by `find_package` | optional | Builds the window; without it the runtime is headless-only |
+| `NEOGEORECOMP_BUILD_TOOLS` | on natively, off on Emscripten | Build host `m68kmake` / `m68krecomp` generators |
+| `NEOGEORECOMP_BUILD_RUNTIME` | on | Build the `neogeorecomp` target runtime library |
+| `NEOGEORECOMP_ENABLE_SDL` | on | Enable SDL2 window/audio/gamepad support (uses `-sUSE_SDL=2` on Emscripten) |
+| `NEOGEORECOMP_HOST_TOOLS_DIR` | empty (auto-built when cross-compiling) | Reuse an existing native build directory containing `m68kmake` / `m68krecomp` |
+| SDL2 found by `find_package` | optional (native) | Builds the native window; without it the runtime is headless-only |
 
 Targets: `neogeorecomp` (the runtime library), `m68krecomp_core` (the recompiler, linked into each game's generator), `m68krecomp` (the standalone tool for flat images), and `ng_conformance`.
+
+### WebAssembly (Emscripten)
+
+With the Emscripten SDK sourced (`emsdk_env.sh`), cross-compiling builds `neogeorecomp` for WebAssembly (`-sALLOW_MEMORY_GROWTH=1`, Emscripten SDL2 `-sUSE_SDL=2`, and `emscripten_set_main_loop_arg` frame pacing) while running `m68kmake` and `m68krecomp` on the host:
+
+```
+emcmake cmake -S . -B build-wasm -DCMAKE_BUILD_TYPE=Release
+cmake --build build-wasm --parallel
+ctest --test-dir build-wasm --output-on-failure
+```
 
 ## Repository layout
 
