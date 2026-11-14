@@ -13,29 +13,79 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 else()
     set(ng_tests_default OFF)
 endif()
+if(CMAKE_CROSSCOMPILING)
+    set(ng_tools_default OFF)
+else()
+    set(ng_tools_default ON)
+endif()
 option(NEOGEORECOMP_BUILD_TESTS "Build the conformance harness" ${ng_tests_default})
+option(NEOGEORECOMP_BUILD_TOOLS "Build host code-generation tools (m68kmake, m68krecomp)" ${ng_tools_default})
+option(NEOGEORECOMP_BUILD_RUNTIME "Build the Neo Geo runtime libraries" ON)
+option(NEOGEORECOMP_ENABLE_SDL "Enable SDL2 window and audio support" ON)
+set(NEOGEORECOMP_HOST_TOOLS_DIR "" CACHE PATH "Directory containing pre-built host m68kmake and m68krecomp")
 
 set(NG_EXT ${CMAKE_CURRENT_SOURCE_DIR}/ext)
 if(NOT EXISTS ${NG_EXT}/musashi/m68k_in.c OR NOT EXISTS ${NG_EXT}/z80/z80.c OR NOT EXISTS ${NG_EXT}/ymfm/src/ymfm_opn.cpp)
     message(FATAL_ERROR "Submodules missing: run  git submodule update --init")
 endif()
 
-# ---- Musashi (MIT): 68000 interpreter, the fallback and the oracle ----
-# m68kmake generates the opcode handlers from m68k_in.c at build time.
-add_executable(m68kmake ${NG_EXT}/musashi/m68kmake.c)
-if(MSVC)
-    target_compile_definitions(m68kmake PRIVATE _CRT_SECURE_NO_WARNINGS)
-    # MSVC 19.4x at /O2 miscompiles m68kmake's mask computation (bit 14 of
-    # every opcode mask is lost, e.g. 0xb000 for 0xf000), which crashes
-    # m68k_init. It is a one-shot generator, so build it unoptimized.
-    target_compile_options(m68kmake PRIVATE /Od)
+# ---- Host code-generation tools (native or imported when cross-compiling) ----
+if(NEOGEORECOMP_BUILD_TOOLS)
+    # m68kmake generates the opcode handlers from m68k_in.c at build time.
+    add_executable(m68kmake ${NG_EXT}/musashi/m68kmake.c)
+    if(MSVC)
+        target_compile_definitions(m68kmake PRIVATE _CRT_SECURE_NO_WARNINGS)
+        # MSVC 19.4x at /O2 miscompiles m68kmake's mask computation (bit 14 of
+        # every opcode mask is lost, e.g. 0xb000 for 0xf000), which crashes
+        # m68k_init. It is a one-shot generator, so build it unoptimized.
+        target_compile_options(m68kmake PRIVATE /Od)
+    endif()
+    set(NG_M68KMAKE_BIN $<TARGET_FILE:m68kmake>)
+    set(NG_M68KMAKE_DEP m68kmake)
+else()
+    if(NOT NEOGEORECOMP_HOST_TOOLS_DIR)
+        set(_ng_host_dir "${CMAKE_CURRENT_BINARY_DIR}/host_tools")
+        message(STATUS "neogeorecomp: configuring native host tools in ${_ng_host_dir}")
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E env
+                    --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS --unset=LDFLAGS
+                    --unset=EMCC_CFLAGS --unset=EMMAKEN_COMPILER
+                    ${CMAKE_COMMAND} -S "${CMAKE_CURRENT_SOURCE_DIR}" -B "${_ng_host_dir}"
+                    -DCMAKE_BUILD_TYPE=Release
+                    -DNEOGEORECOMP_BUILD_TOOLS=ON
+                    -DNEOGEORECOMP_BUILD_RUNTIME=OFF
+                    -DNEOGEORECOMP_BUILD_TESTS=OFF
+            RESULT_VARIABLE _ng_host_cfg_res)
+        if(NOT _ng_host_cfg_res EQUAL 0)
+            message(FATAL_ERROR "Failed to configure native host tools in ${_ng_host_dir}. "
+                                "Build host tools natively and pass -DNEOGEORECOMP_HOST_TOOLS_DIR=...")
+        endif()
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} --build "${_ng_host_dir}" --config Release --parallel
+            RESULT_VARIABLE _ng_host_bld_res)
+        if(NOT _ng_host_bld_res EQUAL 0)
+            message(FATAL_ERROR "Failed to build native host tools in ${_ng_host_dir}")
+        endif()
+        set(NEOGEORECOMP_HOST_TOOLS_DIR "${_ng_host_dir}")
+    endif()
+    find_program(NG_HOST_M68KMAKE NAMES m68kmake m68kmake.exe
+        PATHS "${NEOGEORECOMP_HOST_TOOLS_DIR}"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/Release"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/Debug"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/neogeorecomp_build"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/neogeorecomp_build/Release"
+        NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    set(NG_M68KMAKE_BIN "${NG_HOST_M68KMAKE}")
+    set(NG_M68KMAKE_DEP "${NG_HOST_M68KMAKE}")
 endif()
+
+# ---- Musashi (MIT): 68000 interpreter, the fallback and the oracle ----
 set(MUSASHI_GEN ${CMAKE_CURRENT_BINARY_DIR}/musashi_gen)
 file(MAKE_DIRECTORY ${MUSASHI_GEN})
 add_custom_command(
     OUTPUT ${MUSASHI_GEN}/m68kops.c ${MUSASHI_GEN}/m68kops.h
-    COMMAND m68kmake ${MUSASHI_GEN} ${NG_EXT}/musashi/m68k_in.c
-    DEPENDS m68kmake ${NG_EXT}/musashi/m68k_in.c
+    COMMAND ${NG_M68KMAKE_BIN} ${MUSASHI_GEN} ${NG_EXT}/musashi/m68k_in.c
+    DEPENDS ${NG_M68KMAKE_DEP} ${NG_EXT}/musashi/m68k_in.c
     COMMENT "Generating Musashi opcode tables")
 
 add_library(musashi STATIC
@@ -54,81 +104,112 @@ else()
     target_link_libraries(musashi PUBLIC m)   # the FPU code calls sin/cos
 endif()
 
-# ---- Z80 (MIT) ----
-add_library(z80core STATIC ${NG_EXT}/z80/z80.c)
-target_include_directories(z80core PUBLIC ${NG_EXT}/z80)
-if(MSVC)
-    target_compile_options(z80core PRIVATE /w)
-endif()
+if(NEOGEORECOMP_BUILD_RUNTIME)
+    # ---- Z80 (MIT) ----
+    add_library(z80core STATIC ${NG_EXT}/z80/z80.c)
+    target_include_directories(z80core PUBLIC ${NG_EXT}/z80)
+    if(MSVC)
+        target_compile_options(z80core PRIVATE /w)
+    endif()
 
-# ---- ymfm (BSD-3): YM2610 synthesis ----
-add_library(ymfm STATIC
-    ${NG_EXT}/ymfm/src/ymfm_opn.cpp
-    ${NG_EXT}/ymfm/src/ymfm_adpcm.cpp
-    ${NG_EXT}/ymfm/src/ymfm_ssg.cpp
-    ${NG_EXT}/ymfm/src/ymfm_misc.cpp)
-target_include_directories(ymfm SYSTEM PUBLIC ${NG_EXT}/ymfm/src)
+    # ---- ymfm (BSD-3): YM2610 synthesis ----
+    add_library(ymfm STATIC
+        ${NG_EXT}/ymfm/src/ymfm_opn.cpp
+        ${NG_EXT}/ymfm/src/ymfm_adpcm.cpp
+        ${NG_EXT}/ymfm/src/ymfm_ssg.cpp
+        ${NG_EXT}/ymfm/src/ymfm_misc.cpp)
+    target_include_directories(ymfm SYSTEM PUBLIC ${NG_EXT}/ymfm/src)
 
-# ---- runtime ----
-# SDL2 provides the window; without it the runtime builds headless-only.
-find_package(SDL2 CONFIG QUIET)
+    # ---- runtime ----
+    # SDL2 provides the window; without it the runtime builds headless-only.
+    if(NEOGEORECOMP_ENABLE_SDL AND NOT EMSCRIPTEN)
+        find_package(SDL2 CONFIG QUIET)
+    endif()
 
-add_library(neogeorecomp STATIC
-    src/neogeo.c
-    src/exec.c
-    src/cpu.c
-    src/bus.c
-    src/lspc.c
-    src/video.c
-    src/io.c
-    src/audio.c
-    src/ym2610.cpp
-    src/platform.c
-    src/romload.c)
-target_include_directories(neogeorecomp
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(neogeorecomp PUBLIC musashi z80core ymfm)
-if(TARGET SDL2::SDL2)
-    # Visible to the game's CMakeLists too, so it can ship the DLL.
-    set_target_properties(SDL2::SDL2 PROPERTIES IMPORTED_GLOBAL TRUE)
-    target_sources(neogeorecomp PRIVATE src/window_sdl.c)
-    target_compile_definitions(neogeorecomp PRIVATE NG_HAVE_SDL)
-    target_link_libraries(neogeorecomp PUBLIC SDL2::SDL2)
-else()
-    message(STATUS "neogeorecomp: SDL2 not found, building headless-only")
-endif()
-if(MSVC)
-    target_compile_definitions(neogeorecomp PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_options(neogeorecomp PRIVATE /W3)
-else()
-    target_compile_options(neogeorecomp PRIVATE -Wall -Wextra)
+    add_library(neogeorecomp STATIC
+        src/neogeo.c
+        src/exec.c
+        src/cpu.c
+        src/bus.c
+        src/lspc.c
+        src/video.c
+        src/io.c
+        src/audio.c
+        src/ym2610.cpp
+        src/platform.c
+        src/romload.c)
+    target_include_directories(neogeorecomp
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(neogeorecomp PUBLIC musashi z80core ymfm)
+    if(EMSCRIPTEN)
+        target_link_options(neogeorecomp PUBLIC
+            -sALLOW_MEMORY_GROWTH=1
+            -sEXPORTED_RUNTIME_METHODS=FS,callMain,ccall,cwrap)
+        if(NEOGEORECOMP_ENABLE_SDL)
+            target_sources(neogeorecomp PRIVATE src/window_sdl.c)
+            target_compile_definitions(neogeorecomp PRIVATE NG_HAVE_SDL)
+            target_compile_options(neogeorecomp PUBLIC -sUSE_SDL=2)
+            target_link_options(neogeorecomp PUBLIC -sUSE_SDL=2)
+        else()
+            message(STATUS "neogeorecomp: SDL2 disabled, building Emscripten headless-only")
+        endif()
+    elseif(TARGET SDL2::SDL2)
+        # Visible to the game's CMakeLists too, so it can ship the DLL.
+        set_target_properties(SDL2::SDL2 PROPERTIES IMPORTED_GLOBAL TRUE)
+        target_sources(neogeorecomp PRIVATE src/window_sdl.c)
+        target_compile_definitions(neogeorecomp PRIVATE NG_HAVE_SDL)
+        target_link_libraries(neogeorecomp PUBLIC SDL2::SDL2)
+    else()
+        message(STATUS "neogeorecomp: SDL2 not found, building headless-only")
+    endif()
+    if(MSVC)
+        target_compile_definitions(neogeorecomp PRIVATE _CRT_SECURE_NO_WARNINGS)
+        target_compile_options(neogeorecomp PRIVATE /W3)
+    else()
+        target_compile_options(neogeorecomp PRIVATE -Wall -Wextra)
+    endif()
 endif()
 
 # ---- m68krecomp: the recompiler, linked into each game's generator ----
-add_library(m68krecomp_core STATIC
-    tools/m68krecomp/decode.c
-    tools/m68krecomp/emit.c
-    tools/m68krecomp/recomp.c
-    src/romload.c)
-target_include_directories(m68krecomp_core
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tools/m68krecomp)
-target_link_libraries(m68krecomp_core PUBLIC musashi)
-if(MSVC)
-    target_compile_definitions(m68krecomp_core PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_options(m68krecomp_core PRIVATE /W3)
+if(NEOGEORECOMP_BUILD_TOOLS)
+    add_library(m68krecomp_core STATIC
+        tools/m68krecomp/decode.c
+        tools/m68krecomp/emit.c
+        tools/m68krecomp/recomp.c
+        src/romload.c)
+    target_include_directories(m68krecomp_core
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tools/m68krecomp)
+    target_link_libraries(m68krecomp_core PUBLIC musashi)
+    if(MSVC)
+        target_compile_definitions(m68krecomp_core PRIVATE _CRT_SECURE_NO_WARNINGS)
+        target_compile_options(m68krecomp_core PRIVATE /W3)
+    endif()
+
+    # The standalone tool, for flat images (used by the conformance harness).
+    add_executable(m68krecomp tools/m68krecomp/main.c)
+    target_link_libraries(m68krecomp PRIVATE m68krecomp_core)
+    target_include_directories(m68krecomp PRIVATE tools/m68krecomp)
+
+    set(NG_M68KRECOMP_BIN $<TARGET_FILE:m68krecomp>)
+    set(NG_M68KRECOMP_DEP m68krecomp)
+elseif(NEOGEORECOMP_BUILD_TESTS)
+    find_program(NG_HOST_M68KRECOMP NAMES m68krecomp m68krecomp.exe
+        PATHS "${NEOGEORECOMP_HOST_TOOLS_DIR}"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/Release"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/Debug"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/neogeorecomp_build"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/neogeorecomp_build/Release"
+              "${NEOGEORECOMP_HOST_TOOLS_DIR}/neogeorecomp_build/Debug"
+        NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    set(NG_M68KRECOMP_BIN "${NG_HOST_M68KRECOMP}")
+    set(NG_M68KRECOMP_DEP "${NG_HOST_M68KRECOMP}")
 endif()
-
-# The standalone tool, for flat images (used by the conformance harness).
-add_executable(m68krecomp tools/m68krecomp/main.c)
-target_link_libraries(m68krecomp PRIVATE m68krecomp_core)
-
-target_include_directories(m68krecomp PRIVATE tools/m68krecomp)
 
 # ---- conformance harness (docs/conformance.md) ----
 # Musashi's 68000 test programs, recompiled at build time and run natively.
-if(NEOGEORECOMP_BUILD_TESTS)
+if(NEOGEORECOMP_BUILD_TESTS AND NEOGEORECOMP_BUILD_RUNTIME)
     enable_testing()
     file(GLOB CONF_BINS ${NG_EXT}/musashi/test/mc68000/*.bin)
     set(CONF_GEN ${CMAKE_CURRENT_BINARY_DIR}/conformance)
@@ -141,9 +222,9 @@ if(NEOGEORECOMP_BUILD_TESTS)
         set(outs ${CONF_GEN}/t_${name}_recomp_00.c ${CONF_GEN}/t_${name}_recomp_table.c)
         add_custom_command(
             OUTPUT ${outs}
-            COMMAND m68krecomp --raw ${bin} --base 0x10000 --entry 0x10000
+            COMMAND ${NG_M68KRECOMP_BIN} --raw ${bin} --base 0x10000 --entry 0x10000
                     --prefix t_${name}_ --out ${CONF_GEN} --files 1
-            DEPENDS m68krecomp ${bin}
+            DEPENDS ${NG_M68KRECOMP_DEP} ${bin}
             COMMENT "Recompiling conformance program ${name}")
         list(APPEND conf_sources ${outs})
     endforeach()
@@ -153,6 +234,8 @@ if(NEOGEORECOMP_BUILD_TESTS)
     target_link_libraries(ng_conformance PRIVATE musashi)
     if(MSVC)
         target_compile_definitions(ng_conformance PRIVATE _CRT_SECURE_NO_WARNINGS)
+    elseif(EMSCRIPTEN)
+        target_link_options(ng_conformance PRIVATE -sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1)
     endif()
     file(READ ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/BASELINE conf_baseline)
     string(STRIP "${conf_baseline}" conf_baseline)
@@ -160,7 +243,7 @@ if(NEOGEORECOMP_BUILD_TESTS)
              COMMAND ng_conformance --corpus ${NG_EXT}/musashi/test/mc68000 --min-pass ${conf_baseline})
 
     # Gamepad input, through SDL's virtual joystick (no window or device needed).
-    if(TARGET SDL2::SDL2)
+    if(TARGET SDL2::SDL2 AND NOT EMSCRIPTEN)
         add_executable(ng_gamepad_test tests/gamepad_test.c src/window_sdl.c)
         target_include_directories(ng_gamepad_test PRIVATE src include)
         target_link_libraries(ng_gamepad_test PRIVATE SDL2::SDL2)

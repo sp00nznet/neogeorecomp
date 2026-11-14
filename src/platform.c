@@ -57,6 +57,7 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
 #endif
 
 static int s_headless;
+static int s_mute;
 
 void platform_early_init(void) {
 #ifdef _WIN32
@@ -75,12 +76,18 @@ int  window_open(const char *title, int scale) {
 }
 bool window_frame(const uint32_t *fb, ng_input_t *in) { (void)fb; (void)in; return true; }
 void window_audio(const int16_t *samples, size_t frames) { (void)samples; (void)frames; }
+void window_pause_audio(int paused) { (void)paused; }
 void window_close(void) {}
 #endif
 
 int platform_init(const char *title, int scale, int headless, const char *record_path) {
     s_headless = headless;
+    s_mute = 0;
     if (record_path) {
+#ifdef __EMSCRIPTEN__
+        fprintf(stderr, "error: --record is not supported in WebAssembly\n");
+        return -1;
+#else
         char cmd[1024];
         snprintf(cmd, sizeof(cmd),
                  "ffmpeg -loglevel error -y -f rawvideo -pix_fmt bgra -s %dx%d -r 59.185606 -i - "
@@ -88,20 +95,24 @@ int platform_init(const char *title, int scale, int headless, const char *record
                  NG_SCREEN_W, NG_SCREEN_H, NG_SCREEN_W * 2, NG_SCREEN_H * 2, record_path);
         s_rec = popen(cmd, "wb");
         if (!s_rec) { fprintf(stderr, "error: cannot start ffmpeg for --record\n"); return -1; }
+#endif
     }
     return headless ? 0 : window_open(title, scale);
 }
 
-bool platform_frame(const uint32_t *fb, ng_input_t *in) {
+bool platform_poll(ng_input_t *in) {
+    return s_headless ? true : window_frame(NULL, in);
+}
+
+void platform_present(const uint32_t *fb) {
     if (fb && s_rec) fwrite(fb, 4, NG_SCREEN_W * NG_SCREEN_H, s_rec);
-    return s_headless ? true : window_frame(fb, in);
+    if (!s_headless) window_frame(fb, NULL);
 }
 
 /* ---- audio: the window, and --wav ---- */
 
 static FILE *s_wav;
 static uint32_t s_wav_bytes;
-static int s_mute;
 
 static void put16le(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 static void put32le(uint8_t *p, uint32_t v) { put16le(p, v); put16le(p + 2, v >> 16); }
@@ -124,6 +135,10 @@ int platform_wav(const char *path) {
 
 void platform_mute(void) { s_mute = 1; }
 
+void platform_pause(int paused) {
+    if (!s_headless) window_pause_audio(paused || s_mute);
+}
+
 void platform_audio(const int16_t *samples, size_t frames) {
     if (s_wav) {
         for (size_t i = 0; i < frames * 2; i++) {   /* WAV is little-endian */
@@ -137,8 +152,10 @@ void platform_audio(const int16_t *samples, size_t frames) {
 }
 
 void platform_shutdown(void) {
+#ifndef __EMSCRIPTEN__
     if (s_rec) { pclose(s_rec); s_rec = NULL; }
-    if (s_wav) { fseek(s_wav, 0, SEEK_SET); wav_header(s_wav, s_wav_bytes); fclose(s_wav); s_wav = NULL; }
+#endif
+    if (s_wav) { fseek(s_wav, 0, SEEK_SET); wav_header(s_wav, s_wav_bytes); fclose(s_wav); s_wav = NULL; s_wav_bytes = 0; }
     if (!s_headless) window_close();
 }
 

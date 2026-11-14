@@ -75,7 +75,12 @@ static inline ng_func_t lookup(uint32_t a) {
     return s ? *s : NULL;
 }
 
+#define PROF_SLOTS 4096
+static struct { uint32_t pc; uint64_t n; } s_prof[PROF_SLOTS];
+
 void exec_init(const ng_func_entry_t *funcs, size_t nfuncs, int interp_only) {
+    exec_shutdown();
+    memset(s_prof, 0, sizeof(s_prof));
     s_tab_fixed = (ng_func_t *)calloc(0x80000, sizeof(ng_func_t));
     s_tab_bank = (ng_func_t *)calloc(0x80000, sizeof(ng_func_t));
     s_tab_bios = (ng_func_t *)calloc(0x10000, sizeof(ng_func_t));
@@ -87,6 +92,22 @@ void exec_init(const ng_func_entry_t *funcs, size_t nfuncs, int interp_only) {
     }
     m68k_init();
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
+}
+
+void exec_shutdown(void) {
+    free(s_tab_fixed); s_tab_fixed = NULL;
+    free(s_tab_bank);  s_tab_bank = NULL;
+    free(s_tab_bios);  s_tab_bios = NULL;
+    free(s_miss_seen); s_miss_seen = NULL;
+    s_nmiss = 0;
+    s_interp_only = 0;
+    s_in_musashi = 0;
+    s_verify = 0;
+    s_verify_blocks = 0;
+    s_verify_fails = 0;
+    s_replay = 0;
+    exec_native_blocks = 0;
+    exec_interp_instrs = 0;
 }
 
 /* ---- interrupts ---- */
@@ -162,9 +183,6 @@ static void note_miss(uint32_t a) {
 /* Where interpretation starts, weighted by how long it runs before
  * reaching native code: the recompiler's biggest coverage gaps first.
  * Printed by exec_report() when NG_PROFILE is set. */
-#define PROF_SLOTS 4096
-static struct { uint32_t pc; uint64_t n; } s_prof[PROF_SLOTS];
-
 static void profile_add(uint32_t pc, uint64_t n) {
     uint32_t h = (pc * 2654435761u) % PROF_SLOTS;
     for (int i = 0; i < PROF_SLOTS; i++, h = (h + 1) % PROF_SLOTS) {

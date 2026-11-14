@@ -36,3 +36,22 @@ jobs:
       # fails if fewer pass than tests/conformance/BASELINE.
       - name: Conformance
         run: ctest --test-dir build -C Release --output-on-failure
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+
+      - name: Configure (WASM)
+        run: emcmake cmake -S . -B build-wasm -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (WASM)
+        run: cmake --build build-wasm --parallel
+
+      - name: Conformance (WASM / Node.js)
+        run: ctest --test-dir build-wasm --output-on-failure

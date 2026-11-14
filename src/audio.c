@@ -41,6 +41,7 @@ void    ym2610_reset(void);
 void    ym2610_write(int port, uint8_t v);
 uint8_t ym2610_read(int port);
 void    ym2610_generate(int16_t *out, size_t n);
+void    ym2610_shutdown(void);
 
 #define SAMPLE_CLOCKS 72
 #define RING 16384                  /* stereo samples, about 0.3 s */
@@ -262,4 +263,10 @@ size_t audio_take_samples(int16_t *out, size_t max_frames) {
     return n;
 }
 
-void audio_shutdown(void) {}
+void audio_shutdown(void) {
+    s_ring_head = 0;
+    s_ring_count = 0;
+    s_use_bios_rom = 1;
+    s_m1 = NULL; s_sm1 = NULL; s_m1_size = 0;
+    ym2610_shutdown();
+}

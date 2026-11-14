@@ -21,7 +21,9 @@
 static SDL_Window *s_win;
 static SDL_Renderer *s_ren;
 static SDL_Texture *s_tex;
+#ifndef __EMSCRIPTEN__
 static uint64_t s_next_tick;
+#endif
 static SDL_AudioDeviceID s_audio;
 static SDL_GameController *s_pad[2];     /* player 1, player 2 */
 
@@ -48,13 +50,17 @@ int window_open(const char *title, int scale) {
         fprintf(stderr, "error: SDL_Init: %s\n", SDL_GetError());
         return -1;
     }
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     s_win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                              NG_SCREEN_W * scale, NG_SCREEN_H * scale, SDL_WINDOW_RESIZABLE);
     s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
+    if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, 0);
     SDL_RenderSetLogicalSize(s_ren, NG_SCREEN_W, NG_SCREEN_H);
     s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                               NG_SCREEN_W, NG_SCREEN_H);
+#ifndef __EMSCRIPTEN__
     s_next_tick = SDL_GetPerformanceCounter();
+#endif
     /* Sound at the YM2610's own rate; SDL converts it for the device. A
      * missing audio device leaves the game silent, not stopped. */
     SDL_AudioSpec want = {0};
@@ -123,38 +129,49 @@ static void read_pad(SDL_GameController *c, uint8_t *bits, uint8_t *start, uint8
 #undef PAD
 }
 
+void window_pause_audio(int paused) {
+    if (s_audio) SDL_PauseAudioDevice(s_audio, paused ? 1 : 0);
+}
+
 bool window_frame(const uint32_t *fb, ng_input_t *in) {
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_QUIT) return false;
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) return false;
-        if (e.type == SDL_CONTROLLERDEVICEADDED) pad_added(e.cdevice.which);
-        if (e.type == SDL_CONTROLLERDEVICEREMOVED) pad_removed(e.cdevice.which);
+    if (in) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) return false;
+#ifndef __EMSCRIPTEN__
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) return false;
+#endif
+            if (e.type == SDL_CONTROLLERDEVICEADDED) pad_added(e.cdevice.which);
+            if (e.type == SDL_CONTROLLERDEVICEREMOVED) pad_removed(e.cdevice.which);
+        }
+        read_keys(in);
+        if (s_pad[0]) read_pad(s_pad[0], &in->p1, &in->start1, &in->coin1, &in->select1);
+        if (s_pad[1]) read_pad(s_pad[1], &in->p2, &in->start2, &in->coin2, &in->select2);
     }
-    read_keys(in);
-    if (s_pad[0]) read_pad(s_pad[0], &in->p1, &in->start1, &in->coin1, &in->select1);
-    if (s_pad[1]) read_pad(s_pad[1], &in->p2, &in->start2, &in->coin2, &in->select2);
     if (fb) {
         SDL_UpdateTexture(s_tex, NULL, fb, NG_SCREEN_W * 4);
         SDL_RenderClear(s_ren);
         SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
         SDL_RenderPresent(s_ren);
+#ifndef __EMSCRIPTEN__
+        /* Pace to the MVS refresh rate, 59.1856 Hz. */
+        uint64_t freq = SDL_GetPerformanceFrequency();
+        s_next_tick += (uint64_t)((double)freq / 59.185606);
+        uint64_t now = SDL_GetPerformanceCounter();
+        if (now < s_next_tick) SDL_Delay((Uint32)((s_next_tick - now) * 1000 / freq));
+        else if (now - s_next_tick > freq / 10) s_next_tick = now;
+#endif
     }
-    /* Pace to the MVS refresh rate, 59.1856 Hz. */
-    uint64_t freq = SDL_GetPerformanceFrequency();
-    s_next_tick += (uint64_t)((double)freq / 59.185606);
-    uint64_t now = SDL_GetPerformanceCounter();
-    if (now < s_next_tick) SDL_Delay((Uint32)((s_next_tick - now) * 1000 / freq));
-    else if (now - s_next_tick > freq / 10) s_next_tick = now;
     return true;
 }
 
 void window_close(void) {
-    for (int i = 0; i < 2; i++)
-        if (s_pad[i]) SDL_GameControllerClose(s_pad[i]);
-    if (s_audio) SDL_CloseAudioDevice(s_audio);
-    if (s_tex) SDL_DestroyTexture(s_tex);
-    if (s_ren) SDL_DestroyRenderer(s_ren);
-    if (s_win) SDL_DestroyWindow(s_win);
+    for (int i = 0; i < 2; i++) {
+        if (s_pad[i]) { SDL_GameControllerClose(s_pad[i]); s_pad[i] = NULL; }
+    }
+    if (s_audio) { SDL_CloseAudioDevice(s_audio); s_audio = 0; }
+    if (s_tex) { SDL_DestroyTexture(s_tex); s_tex = NULL; }
+    if (s_ren) { SDL_DestroyRenderer(s_ren); s_ren = NULL; }
+    if (s_win) { SDL_DestroyWindow(s_win); s_win = NULL; }
     SDL_Quit();
 }

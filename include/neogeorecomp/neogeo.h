@@ -62,6 +62,33 @@ enum {
     NG_A = 0x10, NG_B = 0x20, NG_C = 0x40, NG_D = 0x80
 };
 
+typedef struct {
+    const char *rom_path;    /* directory for game ROM files (default: "roms") */
+    const char *bios_path;   /* directory for system ROM files (NULL => rom_path) */
+    const char *bios_name;   /* system ROM filename (NULL => "sp-s2.sp1") */
+    const char *record_path; /* optional MP4 path (native only) */
+    const char *input_path;  /* optional scripted input file */
+    const char *dump_misses; /* optional output path for uncovered PCs */
+    const char *wav_path;    /* optional WAV output path */
+    int         headless;    /* 1 = no window */
+    int         interp;      /* 1 = run everything in the interpreter */
+    int         verify;      /* 1 = compare every native block against Musashi */
+    int         scale;       /* window scale (default: 3) */
+    int         mute;        /* 1 = mute window audio */
+    long        frames;      /* max frames to run, or < 0 for unlimited */
+} ng_config_t;
+
+void ng_config_default(ng_config_t *cfg);
+int  ng_init(const ng_config_t *cfg, const ng_game_t *game,
+             const ng_func_entry_t *funcs, size_t nfuncs);
+int  ng_step_frame(void);
+void ng_reset(void);
+void ng_shutdown(void);
+
+const uint32_t *ng_framebuffer(void);
+long ng_frame_count(void);
+void ng_set_external_input(const ng_input_t *in);
+
 int ng_main(int argc, char **argv, const ng_game_t *game,
             const ng_func_entry_t *funcs, size_t nfuncs);
 

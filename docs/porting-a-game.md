@@ -14,7 +14,7 @@ yourgame/
   CMakeLists.txt         copy metalslug's
 ```
 
-`.gitignore` must cover `roms/`, `build/`, `generated/` and `entries*.txt`. None of them may be committed (REPO_RULES section 3).
+`.gitignore` must cover `roms/`, `build/`, `build-wasm/`, `generated/` and `entries*.txt`. None of them may be committed (REPO_RULES section 3).
 
 ## 2. Describe the ROM set
 
